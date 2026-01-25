@@ -64,7 +64,7 @@ pub fn generate_mods_json(
 
             let entry = ModsJsonEntry {
                 file_name: dfmod_info.file_name.clone(),
-                title: dfmod_info.title,
+                title: existing_entry.map_or(dfmod_info.title.clone(), |e| e.title.clone()),
                 enabled: existing_entry.map_or(true, |e| e.enabled),
                 load_priority: existing_entry.map_or(priority, |e| e.load_priority),
             };
@@ -129,5 +129,39 @@ mod tests {
     fn test_generate_mods_json_empty() {
         let result = generate_mods_json(&[], &[]).unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_generate_mods_json_preserves_existing_title() {
+        use std::fs;
+
+        let temp_dir = TempDir::new().unwrap();
+        let mod_path = temp_dir.path().join("TestMod");
+        fs::create_dir(&mod_path).unwrap();
+
+        let mods_subfolder = mod_path.join("Mods");
+        fs::create_dir(&mods_subfolder).unwrap();
+
+        // Create a .dfmod file with lowercase filename
+        fs::write(mods_subfolder.join("dream 90s - backgrounds.dfmod"), "binary data").unwrap();
+
+        // Simulate existing Mods.json entry with all-caps title from DFU
+        let existing_entries = vec![ModsJsonEntry {
+            file_name: "dream 90s - backgrounds".to_string(),
+            title: "DREAM 90s - BACKGROUNDS".to_string(), // From asset bundle
+            enabled: false,
+            load_priority: 5,
+        }];
+
+        let enabled_mods = vec![("TestMod".to_string(), mod_path.clone())];
+        let result = generate_mods_json(&enabled_mods, &existing_entries).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].file_name, "dream 90s - backgrounds");
+        // Should preserve the original all-caps title from DFU, not generate title case
+        assert_eq!(result[0].title, "DREAM 90s - BACKGROUNDS");
+        // Should preserve enabled and priority
+        assert_eq!(result[0].enabled, false);
+        assert_eq!(result[0].load_priority, 0); // Gets renormalized to 0
     }
 }
