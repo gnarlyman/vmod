@@ -348,31 +348,37 @@ impl ModListView {
         };
 
         // Scan mods folder
-        let mods = ModList::scan_mods_folder(mods_folder);
+        let mut mods = ModList::scan_mods_folder(mods_folder);
 
-        // Populate the model with saved enabled state and order
+        // Restore enabled state and order for all mods
+        for mod_entry in &mods {
+            // Get mod folder name for state lookup
+            let mod_folder_name = mod_entry.path()
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            // Restore enabled state from saved state
+            let is_enabled = mod_state.is_enabled(&mod_folder_name);
+            if is_enabled {
+                mod_entry.set_enabled(true);
+            }
+
+            // Restore order from saved state if available
+            if let Some(saved_order) = mod_state.get_order(&mod_folder_name) {
+                mod_entry.set_order(saved_order);
+            }
+        }
+
+        // Sort mods by order before adding to model
+        mods.sort_by_key(|m| m.order());
+
+        // Populate the model with sorted mods
         let model = self.model.borrow();
         if let Some(model) = model.as_ref() {
             model.remove_all();
             for mod_entry in mods {
-                // Get mod folder name for state lookup
-                let mod_folder_name = mod_entry.path()
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                // Restore enabled state from saved state
-                let is_enabled = mod_state.is_enabled(&mod_folder_name);
-                if is_enabled {
-                    mod_entry.set_enabled(true);
-                }
-
-                // Restore order from saved state if available
-                if let Some(saved_order) = mod_state.get_order(&mod_folder_name) {
-                    mod_entry.set_order(saved_order);
-                }
-
                 model.append(&mod_entry);
             }
         }
@@ -522,19 +528,30 @@ impl ModListView {
             mod_entry.set_order(prev_mod.order());
             prev_mod.set_order(temp_order);
 
-            // Drop the borrow before calling static methods
+            // Collect all items and sort by order
             let n_items = model_store.n_items();
+            let mut mods: Vec<ModEntry> = Vec::new();
+            for i in 0..n_items {
+                if let Some(item) = model_store.item(i) {
+                    if let Ok(entry) = item.downcast::<ModEntry>() {
+                        mods.push(entry);
+                    }
+                }
+            }
+            mods.sort_by_key(|m| m.order());
+
+            // Clear and re-populate model in sorted order
+            model_store.remove_all();
+            for mod_entry in mods {
+                model_store.append(&mod_entry);
+            }
+
+            // Drop the borrow before calling static methods
             drop(model_borrow);
 
             // Rebuild VFS and save
             Self::rebuild_vfs_static(model, vfs);
             Self::save_mod_state_static(model, profile_name);
-
-            // Refresh UI
-            let model_borrow = model.borrow();
-            if let Some(model_store) = model_borrow.as_ref() {
-                model_store.items_changed(0, n_items, n_items);
-            }
         }
     }
 
@@ -564,19 +581,30 @@ impl ModListView {
             mod_entry.set_order(next_mod.order());
             next_mod.set_order(temp_order);
 
-            // Drop the borrow before calling static methods
+            // Collect all items and sort by order
             let n_items = model_store.n_items();
+            let mut mods: Vec<ModEntry> = Vec::new();
+            for i in 0..n_items {
+                if let Some(item) = model_store.item(i) {
+                    if let Ok(entry) = item.downcast::<ModEntry>() {
+                        mods.push(entry);
+                    }
+                }
+            }
+            mods.sort_by_key(|m| m.order());
+
+            // Clear and re-populate model in sorted order
+            model_store.remove_all();
+            for mod_entry in mods {
+                model_store.append(&mod_entry);
+            }
+
+            // Drop the borrow before calling static methods
             drop(model_borrow);
 
             // Rebuild VFS and save
             Self::rebuild_vfs_static(model, vfs);
             Self::save_mod_state_static(model, profile_name);
-
-            // Refresh UI
-            let model_borrow = model.borrow();
-            if let Some(model_store) = model_borrow.as_ref() {
-                model_store.items_changed(0, n_items, n_items);
-            }
         }
     }
 
