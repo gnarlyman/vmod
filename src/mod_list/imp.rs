@@ -3,6 +3,7 @@ use gtk4::subclass::prelude::*;
 use gtk4::{
     glib, gio, Box, Button, ColumnView, ColumnViewColumn, Label, Orientation, ScrolledWindow,
     SignalListItemFactory, SingleSelection, CheckButton, SearchEntry, Paned, UriLauncher,
+    CustomFilter, FilterListModel, FilterChange,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -15,6 +16,8 @@ use crate::conflict_panel::ConflictPanel;
 pub struct ModListView {
     pub column_view: RefCell<Option<ColumnView>>,
     pub model: RefCell<Option<gio::ListStore>>,
+    pub filter_model: RefCell<Option<FilterListModel>>,
+    pub filter: RefCell<Option<CustomFilter>>,
     pub selection_model: RefCell<Option<SingleSelection>>,
     pub vfs: RefCell<Option<VirtualFileSystem>>,
     pub search_entry: RefCell<Option<SearchEntry>>,
@@ -31,6 +34,8 @@ impl Default for ModListView {
         Self {
             column_view: RefCell::new(None),
             model: RefCell::new(None),
+            filter_model: RefCell::new(None),
+            filter: RefCell::new(None),
             selection_model: RefCell::new(None),
             vfs: RefCell::new(None),
             search_entry: RefCell::new(None),
@@ -89,11 +94,39 @@ impl ObjectImpl for ModListView {
         let model = gio::ListStore::new::<ModEntry>();
         self.model.replace(Some(model.clone()));
 
-        // Create selection model
-        let selection_model = SingleSelection::new(Some(model.clone()));
+        // Create filter for searching by name
+        let search_text: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+        let search_text_clone = search_text.clone();
+        let filter = CustomFilter::new(move |obj| {
+            let search = search_text_clone.borrow();
+            if search.is_empty() {
+                return true;
+            }
+            if let Some(mod_entry) = obj.downcast_ref::<ModEntry>() {
+                mod_entry.name().to_lowercase().contains(&search.to_lowercase())
+            } else {
+                true
+            }
+        });
+        self.filter.replace(Some(filter.clone()));
+
+        // Create filter model wrapping the ListStore
+        let filter_model = FilterListModel::new(Some(model.clone()), Some(filter.clone()));
+        self.filter_model.replace(Some(filter_model.clone()));
+
+        // Create selection model using filtered model
+        let selection_model = SingleSelection::new(Some(filter_model.clone()));
         selection_model.set_autoselect(false);
         selection_model.set_can_unselect(true);
         self.selection_model.replace(Some(selection_model.clone()));
+
+        // Connect search entry to filter
+        let filter_clone = filter.clone();
+        let search_text_for_signal = search_text.clone();
+        search_entry.connect_search_changed(move |entry| {
+            *search_text_for_signal.borrow_mut() = entry.text().to_string();
+            filter_clone.changed(FilterChange::Different);
+        });
 
         // Create ColumnView
         let column_view = ColumnView::new(Some(selection_model.clone()));
