@@ -281,7 +281,12 @@ impl VmodWindow {
         // Get the game mods folder from the profile
         let game_mods_folder = active_profile.get_mods_folder();
 
+        // Get the Mods.json path from the profile
+        let mods_json_path = active_profile.mods_json_path
+            .as_ref()
+            .expect("Mods.json path should be initialized");
+
         // Load mods with profile name for state persistence
-        mod_list_view.load_mods(&profile_mods_folder, &game_mods_folder, &active_profile.name);
+        mod_list_view.load_mods(&profile_mods_folder, &game_mods_folder, &active_profile.name, mods_json_path);
     }
 }

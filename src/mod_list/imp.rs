@@ -2,13 +2,14 @@ use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use gtk4::{
     glib, gio, Box, Button, ColumnView, ColumnViewColumn, Label, Orientation, ScrolledWindow,
-    SignalListItemFactory, SingleSelection, CheckButton, SearchEntry,
+    SignalListItemFactory, SingleSelection, CheckButton, SearchEntry, Paned,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::mod_entry::{ModEntry, ModList, ModState, VirtualFileSystem};
+use crate::mod_entry::{ModEntry, ModList, ModState, VirtualFileSystem, load_mods_json, generate_mods_json};
+use crate::mods_json_view::ModsJsonView;
 
 pub struct ModListView {
     pub column_view: RefCell<Option<ColumnView>>,
@@ -16,6 +17,8 @@ pub struct ModListView {
     pub vfs: RefCell<Option<VirtualFileSystem>>,
     pub search_entry: RefCell<Option<SearchEntry>>,
     pub profile_name: Rc<RefCell<Option<String>>>,
+    pub mods_json_view: RefCell<Option<ModsJsonView>>,
+    pub mods_json_path: RefCell<Option<PathBuf>>,
 }
 
 impl Default for ModListView {
@@ -26,6 +29,8 @@ impl Default for ModListView {
             vfs: RefCell::new(None),
             search_entry: RefCell::new(None),
             profile_name: Rc::new(RefCell::new(None)),
+            mods_json_view: RefCell::new(None),
+            mods_json_path: RefCell::new(None),
         }
     }
 }
@@ -44,15 +49,27 @@ impl ObjectImpl for ModListView {
         let obj = self.obj();
         obj.set_orientation(Orientation::Vertical);
         obj.set_spacing(6);
-        obj.set_margin_top(12);
-        obj.set_margin_bottom(12);
-        obj.set_margin_start(12);
-        obj.set_margin_end(12);
+
+        // Create horizontal Paned (resizable split)
+        let paned = Paned::new(Orientation::Horizontal);
+
+        // Left side: Mod folders list
+        let left_box = Box::new(Orientation::Vertical, 6);
+        left_box.set_margin_top(12);
+        left_box.set_margin_bottom(12);
+        left_box.set_margin_start(12);
+        left_box.set_margin_end(6);
+
+        // Header label
+        let mod_folders_label = Label::new(Some("Mod Folders"));
+        mod_folders_label.add_css_class("heading");
+        mod_folders_label.set_xalign(0.0);
+        left_box.append(&mod_folders_label);
 
         // Create search entry
         let search_entry = SearchEntry::new();
         search_entry.set_placeholder_text(Some("Filter mods..."));
-        obj.append(&search_entry);
+        left_box.append(&search_entry);
         self.search_entry.replace(Some(search_entry.clone()));
 
         // Create the ListStore to hold ModEntry objects
@@ -82,12 +99,27 @@ impl ObjectImpl for ModListView {
         scrolled_window.set_hexpand(true);
         scrolled_window.set_child(Some(&column_view));
 
-        obj.append(&scrolled_window);
+        left_box.append(&scrolled_window);
 
-        // Add Apply button at the bottom
+        paned.set_start_child(Some(&left_box));
+
+        // Right side: Mods.json view
+        let mods_json_view = ModsJsonView::new();
+        self.mods_json_view.replace(Some(mods_json_view.clone()));
+        paned.set_end_child(Some(&mods_json_view));
+
+        // Set default paned position (60% left, 40% right)
+        paned.set_position(700);
+
+        obj.append(&paned);
+
+        // Add Apply button at the bottom (outside paned, spans full width)
         let button_box = Box::new(Orientation::Horizontal, 6);
         button_box.set_halign(gtk4::Align::End);
         button_box.set_margin_top(6);
+        button_box.set_margin_bottom(12);
+        button_box.set_margin_start(12);
+        button_box.set_margin_end(12);
 
         let apply_button = Button::with_label("Apply Changes");
         apply_button.add_css_class("suggested-action");
@@ -95,12 +127,10 @@ impl ObjectImpl for ModListView {
 
         obj.append(&button_box);
 
-        // Connect Apply button to rebuild VFS
-        // We need to call the public method on the widget, not use the captured refs
-        // because VFS isn't initialized yet in constructed()
+        // Connect Apply button to apply all changes
         let widget = obj.clone();
         apply_button.connect_clicked(move |_| {
-            widget.imp().rebuild_vfs();
+            widget.imp().apply_changes();
         });
 
         self.column_view.replace(Some(column_view));
@@ -124,7 +154,6 @@ impl ModListView {
 
         // Bind: Connect the CheckButton to the ModEntry's enabled property
         let model_ref = self.model.clone();
-        let vfs_ref = self.vfs.clone();
         let profile_name_ref = self.profile_name.clone();
         factory.connect_bind(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
@@ -348,9 +377,12 @@ impl ModListView {
         column_view.append_column(&column);
     }
 
-    pub fn load_mods(&self, mods_folder: &std::path::Path, game_mods_folder: &std::path::Path, profile_name: &str) {
+    pub fn load_mods(&self, mods_folder: &std::path::Path, game_mods_folder: &std::path::Path, profile_name: &str, mods_json_path: &std::path::Path) {
         // Store profile name
         self.profile_name.replace(Some(profile_name.to_string()));
+
+        // Store mods_json_path
+        self.mods_json_path.replace(Some(mods_json_path.to_path_buf()));
 
         // Create VFS manager
         let vfs = VirtualFileSystem::new(game_mods_folder.to_path_buf());
@@ -396,6 +428,11 @@ impl ModListView {
             for mod_entry in mods {
                 model.append(&mod_entry);
             }
+        }
+
+        // Load Mods.json into ModsJsonView
+        if let Some(mods_json_view) = self.mods_json_view.borrow().as_ref() {
+            mods_json_view.load_mods_json(mods_json_path);
         }
 
         // Rebuild VFS with loaded state
@@ -521,7 +558,7 @@ impl ModListView {
     fn move_mod_up_static(
         model: &RefCell<Option<gio::ListStore>>,
         mod_entry: &ModEntry,
-        vfs: &RefCell<Option<VirtualFileSystem>>,
+        _vfs: &RefCell<Option<VirtualFileSystem>>,
         profile_name: &Rc<RefCell<Option<String>>>
     ) {
         let model_borrow = model.borrow();
@@ -573,7 +610,7 @@ impl ModListView {
     fn move_mod_down_static(
         model: &RefCell<Option<gio::ListStore>>,
         mod_entry: &ModEntry,
-        vfs: &RefCell<Option<VirtualFileSystem>>,
+        _vfs: &RefCell<Option<VirtualFileSystem>>,
         profile_name: &Rc<RefCell<Option<String>>>
     ) {
         let model_borrow = model.borrow();
@@ -629,5 +666,70 @@ impl ModListView {
     /// Public API: Move a mod down
     pub fn move_mod_down(&self, mod_entry: &ModEntry) {
         Self::move_mod_down_static(&self.model, mod_entry, &self.vfs, &self.profile_name);
+    }
+
+    /// Apply all changes: rebuild VFS and generate Mods.json
+    pub fn apply_changes(&self) {
+        // Step 1: Rebuild VFS
+        self.rebuild_vfs();
+
+        // Step 2: Generate and save Mods.json
+        if let Err(e) = self.generate_and_save_mods_json() {
+            eprintln!("Failed to generate Mods.json: {}", e);
+        }
+    }
+
+    /// Generate Mods.json from enabled mod folders
+    fn generate_and_save_mods_json(&self) -> Result<(), String> {
+        let model = self.model.borrow();
+        let mods_json_path = self.mods_json_path.borrow();
+        let mods_json_view = self.mods_json_view.borrow();
+
+        let model = model.as_ref().ok_or("Model not initialized")?;
+        let mods_json_path = mods_json_path.as_ref().ok_or("Mods.json path not set")?;
+        let mods_json_view = mods_json_view.as_ref().ok_or("ModsJsonView not initialized")?;
+
+        // Load existing Mods.json
+        let existing_entries = load_mods_json(mods_json_path)?;
+
+        // Collect enabled mod folders with .dfmod files
+        let mut enabled_mods = Vec::new();
+        for i in 0..model.n_items() {
+            if let Some(obj) = model.item(i) {
+                if let Ok(mod_entry) = obj.downcast::<ModEntry>() {
+                    if mod_entry.enabled() {
+                        enabled_mods.push((
+                            mod_entry.name(),
+                            mod_entry.path(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Sort by order
+        enabled_mods.sort_by_key(|(name, _path)| {
+            for i in 0..model.n_items() {
+                if let Some(obj) = model.item(i) {
+                    if let Ok(mod_entry) = obj.downcast::<ModEntry>() {
+                        if mod_entry.name() == *name {
+                            return mod_entry.order();
+                        }
+                    }
+                }
+            }
+            0
+        });
+
+        // Generate new Mods.json entries
+        let new_entries = generate_mods_json(&enabled_mods, &existing_entries)?;
+
+        // Save to disk
+        crate::mod_entry::save_mods_json(mods_json_path, &new_entries)?;
+
+        // Reload ModsJsonView
+        mods_json_view.load_mods_json(mods_json_path);
+
+        Ok(())
     }
 }
