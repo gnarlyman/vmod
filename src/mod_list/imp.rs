@@ -6,16 +6,28 @@ use gtk4::{
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use crate::mod_entry::{ModEntry, ModList, ModState, VirtualFileSystem};
 
-#[derive(Default)]
 pub struct ModListView {
     pub column_view: RefCell<Option<ColumnView>>,
     pub model: RefCell<Option<gio::ListStore>>,
     pub vfs: RefCell<Option<VirtualFileSystem>>,
     pub search_entry: RefCell<Option<SearchEntry>>,
-    pub profile_name: RefCell<Option<String>>,
+    pub profile_name: Rc<RefCell<Option<String>>>,
+}
+
+impl Default for ModListView {
+    fn default() -> Self {
+        Self {
+            column_view: RefCell::new(None),
+            model: RefCell::new(None),
+            vfs: RefCell::new(None),
+            search_entry: RefCell::new(None),
+            profile_name: Rc::new(RefCell::new(None)),
+        }
+    }
 }
 
 #[glib::object_subclass]
@@ -257,7 +269,10 @@ impl ModListView {
         self.vfs.replace(Some(vfs));
 
         // Load saved mod state
-        let mod_state = ModState::load(profile_name).unwrap_or_default();
+        let mod_state = match ModState::load(profile_name) {
+            Ok(state) => state,
+            Err(_) => ModState::default(),
+        };
 
         // Scan mods folder
         let mods = ModList::scan_mods_folder(mods_folder);
@@ -275,7 +290,8 @@ impl ModListView {
                     .to_string();
 
                 // Restore enabled state from saved state
-                if mod_state.is_enabled(&mod_folder_name) {
+                let is_enabled = mod_state.is_enabled(&mod_folder_name);
+                if is_enabled {
                     mod_entry.set_enabled(true);
                 }
 
@@ -347,7 +363,7 @@ impl ModListView {
 
     /// Save mod enabled state to disk
     /// Static version for use in closures
-    fn save_mod_state_static(model: &RefCell<Option<gio::ListStore>>, profile_name: &RefCell<Option<String>>) {
+    fn save_mod_state_static(model: &RefCell<Option<gio::ListStore>>, profile_name: &Rc<RefCell<Option<String>>>) {
         let model_borrow = model.borrow();
         let profile_name_borrow = profile_name.borrow();
 
@@ -356,6 +372,7 @@ impl ModListView {
 
             // Collect enabled state from all mods
             let n_items = model.n_items();
+
             for i in 0..n_items {
                 if let Some(item) = model.item(i) {
                     if let Ok(mod_entry) = item.downcast::<ModEntry>() {
@@ -365,7 +382,8 @@ impl ModListView {
                             .unwrap_or("")
                             .to_string();
 
-                        mod_state.set_enabled(mod_folder_name, mod_entry.enabled());
+                        let enabled = mod_entry.enabled();
+                        mod_state.set_enabled(mod_folder_name, enabled);
                     }
                 }
             }

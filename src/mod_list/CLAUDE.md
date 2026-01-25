@@ -7,6 +7,13 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #1201 | 9:17 PM | ✅ | Removed Debug Logging from Mod Loading | ~228 |
+| #1197 | " | 🔄 | Removed Debug Print from Checkbox Toggle Handler | ~198 |
+| #1187 | 9:13 PM | ✅ | Added Debug Logging to Mod State Persistence | ~253 |
+| #1183 | 9:12 PM | 🟣 | Automatic Mod State Persistence on Checkbox Toggle | ~293 |
+| #1180 | 9:09 PM | ✅ | Added Debug Logging to Mod Loading Process | ~283 |
+| #1173 | 9:07 PM | 🟣 | Mod State Persistence Implementation | ~365 |
+| #1171 | 9:06 PM | ✅ | Added Profile Name Tracking and ModState Import to ModListView | ~255 |
 | #1149 | 8:50 PM | 🟣 | Added VFS Rebuild Public Method to ModListView | ~203 |
 | #1147 | " | 🟣 | Automatic VFS Rebuild on Checkbox Toggle | ~341 |
 | #1134 | 8:32 PM | 🔴 | Fixed SignalListItemFactory Callback Parameters for Name Column | ~270 |

@@ -7,6 +7,8 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #1170 | 9:06 PM | ✅ | Added ModState Module to mod_entry | ~185 |
+| #1169 | " | 🟣 | Implemented Persistent Mod State Management with JSON Serialization | ~391 |
 | #1159 | 8:55 PM | 🔴 | Changed VFS to Include Docs Folder in Symlinking | ~329 |
 | #1146 | 8:49 PM | 🟣 | Implemented Virtual Filesystem with Symlink-Based Mod Management | ~566 |
 | #1144 | 8:45 PM | 🟣 | Enhanced Mod Validation for DFU Archive Structure | ~338 |
