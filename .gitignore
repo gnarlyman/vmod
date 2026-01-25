@@ -1,0 +1,17 @@
+# Rust/Cargo
+/target/
+Cargo.lock
+
+# GSettings compiled schemas
+resources/gschemas.compiled
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

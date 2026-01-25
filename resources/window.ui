@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <template class="VmodWindow" parent="GtkApplicationWindow">
+    <property name="title">VMOD - Mod Organizer</property>
+    <property name="default-width">1200</property>
+    <property name="default-height">800</property>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <child>
+          <object class="GtkPopoverMenuBar" id="menu_bar">
+            <property name="menu-model">primary_menu</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="content_box">
+            <property name="orientation">vertical</property>
+            <property name="vexpand">true</property>
+            <property name="hexpand">true</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>
