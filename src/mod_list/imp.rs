@@ -84,6 +84,24 @@ impl ObjectImpl for ModListView {
 
         obj.append(&scrolled_window);
 
+        // Add Apply button at the bottom
+        let button_box = Box::new(Orientation::Horizontal, 6);
+        button_box.set_halign(gtk4::Align::End);
+        button_box.set_margin_top(6);
+
+        let apply_button = Button::with_label("Apply Changes");
+        apply_button.add_css_class("suggested-action");
+        button_box.append(&apply_button);
+
+        obj.append(&button_box);
+
+        // Connect Apply button to rebuild VFS
+        let model_ref = self.model.clone();
+        let vfs_ref = self.vfs.clone();
+        apply_button.connect_clicked(move |_| {
+            Self::rebuild_vfs_static(&model_ref, &vfs_ref);
+        });
+
         self.column_view.replace(Some(column_view));
     }
 }
@@ -128,15 +146,11 @@ impl ModListView {
                 .sync_create()
                 .build();
 
-            // Connect to toggled signal to rebuild VFS and save state
+            // Connect to toggled signal to save state
             let model_clone = model_ref.clone();
-            let vfs_clone = vfs_ref.clone();
             let profile_name_clone = profile_name_ref.clone();
             check_button.connect_toggled(move |_btn| {
-                // Rebuild all symlinks when any mod's enabled state changes
-                Self::rebuild_vfs_static(&model_clone, &vfs_clone);
-
-                // Save mod state
+                // Save mod state (VFS rebuild happens on Apply button)
                 Self::save_mod_state_static(&model_clone, &profile_name_clone);
             });
         });
@@ -549,8 +563,7 @@ impl ModListView {
             // Drop the borrow before calling static methods
             drop(model_borrow);
 
-            // Rebuild VFS and save
-            Self::rebuild_vfs_static(model, vfs);
+            // Save state (VFS rebuild happens on Apply button)
             Self::save_mod_state_static(model, profile_name);
         }
     }
@@ -602,8 +615,7 @@ impl ModListView {
             // Drop the borrow before calling static methods
             drop(model_borrow);
 
-            // Rebuild VFS and save
-            Self::rebuild_vfs_static(model, vfs);
+            // Save state (VFS rebuild happens on Apply button)
             Self::save_mod_state_static(model, profile_name);
         }
     }
