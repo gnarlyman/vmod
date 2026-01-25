@@ -16,8 +16,8 @@ impl ModListView {
     }
 
     /// Loads mods from the specified folder and populates the list
-    pub fn load_mods(&self, mods_folder: &std::path::Path, game_mods_folder: &std::path::Path) {
-        self.imp().load_mods(mods_folder, game_mods_folder);
+    pub fn load_mods(&self, mods_folder: &std::path::Path, game_mods_folder: &std::path::Path, profile_name: &str) {
+        self.imp().load_mods(mods_folder, game_mods_folder, profile_name);
     }
 
     /// Refreshes the mod list display

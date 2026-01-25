@@ -281,7 +281,7 @@ impl VmodWindow {
         // Get the game mods folder from the profile
         let game_mods_folder = active_profile.get_mods_folder();
 
-        // Load mods
-        mod_list_view.load_mods(&profile_mods_folder, &game_mods_folder);
+        // Load mods with profile name for state persistence
+        mod_list_view.load_mods(&profile_mods_folder, &game_mods_folder, &active_profile.name);
     }
 }

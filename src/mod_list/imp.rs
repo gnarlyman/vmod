@@ -7,7 +7,7 @@ use gtk4::{
 use std::cell::RefCell;
 use std::path::PathBuf;
 
-use crate::mod_entry::{ModEntry, ModList, VirtualFileSystem};
+use crate::mod_entry::{ModEntry, ModList, ModState, VirtualFileSystem};
 
 #[derive(Default)]
 pub struct ModListView {
@@ -15,6 +15,7 @@ pub struct ModListView {
     pub model: RefCell<Option<gio::ListStore>>,
     pub vfs: RefCell<Option<VirtualFileSystem>>,
     pub search_entry: RefCell<Option<SearchEntry>>,
+    pub profile_name: RefCell<Option<String>>,
 }
 
 #[glib::object_subclass]
@@ -92,6 +93,7 @@ impl ModListView {
         // Bind: Connect the CheckButton to the ModEntry's enabled property
         let model_ref = self.model.clone();
         let vfs_ref = self.vfs.clone();
+        let profile_name_ref = self.profile_name.clone();
         factory.connect_bind(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
@@ -113,12 +115,16 @@ impl ModListView {
                 .sync_create()
                 .build();
 
-            // Connect to toggled signal to rebuild VFS
+            // Connect to toggled signal to rebuild VFS and save state
             let model_clone = model_ref.clone();
             let vfs_clone = vfs_ref.clone();
+            let profile_name_clone = profile_name_ref.clone();
             check_button.connect_toggled(move |_btn| {
                 // Rebuild all symlinks when any mod's enabled state changes
                 Self::rebuild_vfs_static(&model_clone, &vfs_clone);
+
+                // Save mod state
+                Self::save_mod_state_static(&model_clone, &profile_name_clone);
             });
         });
 
@@ -242,22 +248,43 @@ impl ModListView {
         column_view.append_column(&column);
     }
 
-    pub fn load_mods(&self, mods_folder: &std::path::Path, game_mods_folder: &std::path::Path) {
+    pub fn load_mods(&self, mods_folder: &std::path::Path, game_mods_folder: &std::path::Path, profile_name: &str) {
+        // Store profile name
+        self.profile_name.replace(Some(profile_name.to_string()));
+
         // Create VFS manager
         let vfs = VirtualFileSystem::new(game_mods_folder.to_path_buf());
         self.vfs.replace(Some(vfs));
 
+        // Load saved mod state
+        let mod_state = ModState::load(profile_name).unwrap_or_default();
+
         // Scan mods folder
         let mods = ModList::scan_mods_folder(mods_folder);
 
-        // Populate the model
+        // Populate the model with saved enabled state
         let model = self.model.borrow();
         if let Some(model) = model.as_ref() {
             model.remove_all();
             for mod_entry in mods {
+                // Get mod folder name for state lookup
+                let mod_folder_name = mod_entry.path()
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                // Restore enabled state from saved state
+                if mod_state.is_enabled(&mod_folder_name) {
+                    mod_entry.set_enabled(true);
+                }
+
                 model.append(&mod_entry);
             }
         }
+
+        // Rebuild VFS with loaded state
+        self.rebuild_vfs();
     }
 
     pub fn refresh_list(&self) {
@@ -316,5 +343,42 @@ impl ModListView {
     /// Rebuild all symlinks based on enabled mods and their order
     pub fn rebuild_vfs(&self) {
         Self::rebuild_vfs_static(&self.model, &self.vfs);
+    }
+
+    /// Save mod enabled state to disk
+    /// Static version for use in closures
+    fn save_mod_state_static(model: &RefCell<Option<gio::ListStore>>, profile_name: &RefCell<Option<String>>) {
+        let model_borrow = model.borrow();
+        let profile_name_borrow = profile_name.borrow();
+
+        if let (Some(model), Some(profile_name)) = (model_borrow.as_ref(), profile_name_borrow.as_ref()) {
+            let mut mod_state = ModState::new();
+
+            // Collect enabled state from all mods
+            let n_items = model.n_items();
+            for i in 0..n_items {
+                if let Some(item) = model.item(i) {
+                    if let Ok(mod_entry) = item.downcast::<ModEntry>() {
+                        let mod_folder_name = mod_entry.path()
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string();
+
+                        mod_state.set_enabled(mod_folder_name, mod_entry.enabled());
+                    }
+                }
+            }
+
+            // Save to disk
+            if let Err(e) = mod_state.save(profile_name) {
+                eprintln!("Failed to save mod state: {}", e);
+            }
+        }
+    }
+
+    /// Save mod state
+    pub fn save_mod_state(&self) {
+        Self::save_mod_state_static(&self.model, &self.profile_name);
     }
 }
