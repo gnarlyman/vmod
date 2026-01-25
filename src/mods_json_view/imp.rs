@@ -303,7 +303,10 @@ impl ModsJsonView {
             model.remove_all();
 
             match load_mods_json(mods_json_path) {
-                Ok(entries) => {
+                Ok(mut entries) => {
+                    // Sort by load_priority so it always displays 0, 1, 2, 3...
+                    entries.sort_by_key(|e| e.load_priority);
+
                     for entry in entries {
                         let dfmod_entry = DfmodEntry::new(
                             entry.file_name,
@@ -346,14 +349,16 @@ impl ModsJsonView {
     }
 
     fn move_entry_up_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry) {
-        if let Some(model) = model.borrow().as_ref() {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
             let current_priority = entry.load_priority();
             if current_priority == 0 {
                 return;
             }
 
-            for i in 0..model.n_items() {
-                if let Some(obj) = model.item(i) {
+            // Swap priorities
+            for i in 0..model_store.n_items() {
+                if let Some(obj) = model_store.item(i) {
                     if let Ok(other_entry) = obj.downcast::<DfmodEntry>() {
                         if other_entry.load_priority() == current_priority - 1 {
                             entry.set_load_priority(current_priority - 1);
@@ -363,20 +368,39 @@ impl ModsJsonView {
                     }
                 }
             }
+
+            // Re-sort the list by priority
+            let mut entries: Vec<DfmodEntry> = Vec::new();
+            for i in 0..model_store.n_items() {
+                if let Some(obj) = model_store.item(i) {
+                    if let Ok(dfmod_entry) = obj.downcast::<DfmodEntry>() {
+                        entries.push(dfmod_entry);
+                    }
+                }
+            }
+            entries.sort_by_key(|e| e.load_priority());
+
+            // Clear and re-populate in sorted order
+            model_store.remove_all();
+            for dfmod_entry in entries {
+                model_store.append(&dfmod_entry);
+            }
         }
     }
 
     fn move_entry_down_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry) {
-        if let Some(model) = model.borrow().as_ref() {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
             let current_priority = entry.load_priority();
-            let max_priority = model.n_items() - 1;
+            let max_priority = model_store.n_items() - 1;
 
             if current_priority >= max_priority {
                 return;
             }
 
-            for i in 0..model.n_items() {
-                if let Some(obj) = model.item(i) {
+            // Swap priorities
+            for i in 0..model_store.n_items() {
+                if let Some(obj) = model_store.item(i) {
                     if let Ok(other_entry) = obj.downcast::<DfmodEntry>() {
                         if other_entry.load_priority() == current_priority + 1 {
                             entry.set_load_priority(current_priority + 1);
@@ -385,6 +409,23 @@ impl ModsJsonView {
                         }
                     }
                 }
+            }
+
+            // Re-sort the list by priority
+            let mut entries: Vec<DfmodEntry> = Vec::new();
+            for i in 0..model_store.n_items() {
+                if let Some(obj) = model_store.item(i) {
+                    if let Ok(dfmod_entry) = obj.downcast::<DfmodEntry>() {
+                        entries.push(dfmod_entry);
+                    }
+                }
+            }
+            entries.sort_by_key(|e| e.load_priority());
+
+            // Clear and re-populate in sorted order
+            model_store.remove_all();
+            for dfmod_entry in entries {
+                model_store.append(&dfmod_entry);
             }
         }
     }
