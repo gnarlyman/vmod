@@ -19,6 +19,20 @@ A GTK4-based mod manager for Daggerfall Unity, written in Rust.
 - Profile selection persistence across sessions
 - Full test coverage (27 tests)
 
+### Phase 3 (Complete)
+- Mod list display with drag-and-drop reordering
+- Virtual filesystem for mod deployment
+- Nexus Mods folder parsing with version extraction
+- Row highlighting for related dfmod entries
+- Mod file tree viewing
+
+### Phase 4 (Complete)
+- Plugin order management via Mods.json
+- Mods.json parsing and serialization
+- Title preservation from existing entries
+- Conflict detection between mods
+- Conflict panel with dual-view file tree display
+
 ## Build Requirements
 
 ### System Dependencies
@@ -85,8 +99,8 @@ vmod/
 
 - **Phase 1** (Complete): GTK4 foundation with menu bar
 - **Phase 2** (Complete): Profile management with auto-detection
-- **Phase 3**: Mod list display and virtual filesystem
-- **Phase 4**: Plugin order management (Mods.json)
+- **Phase 3** (Complete): Mod list display and virtual filesystem
+- **Phase 4** (Complete): Plugin order management and conflict detection
 - **Phase 5**: Download manager with Nexus integration
 
 ## License
