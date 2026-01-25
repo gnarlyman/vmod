@@ -7,37 +7,30 @@ pub struct DfmodInfo {
     pub file_name: String,
 }
 
-/// Extract a readable title from a mod folder name
-/// E.g., "ArchaeologistsGuild-2.6.1-14-2-6-1-1712582888" → "Archaeologists Guild"
-fn extract_title_from_folder_name(folder_name: &str) -> String {
-    // Split on common delimiters and take the first part
-    let base_name = folder_name
-        .split('-')
-        .next()
-        .unwrap_or(folder_name);
-
-    // Insert spaces before capital letters (camelCase to Title Case)
-    let mut result = String::new();
-    let mut chars = base_name.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c.is_uppercase() && !result.is_empty() {
-            // Only add space if the previous char wasn't a space
-            if !result.ends_with(' ') {
-                result.push(' ');
+/// Capitalize first letter of each word in a string
+/// E.g., "aquatic sprites" → "Aquatic Sprites"
+/// E.g., "archaeologists" → "Archaeologists"
+fn capitalize_words(s: &str) -> String {
+    s.split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
             }
-        }
-        result.push(c);
-    }
-
-    result.trim().to_string()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Scan mod folder for .dfmod files
-/// Returns DfmodInfo with folder name as both FileName and a generated Title
+/// Returns DfmodInfo for each .dfmod file found
+///
+/// FileName: The .dfmod filename without extension (e.g., "archaeologists")
+/// Title: Capitalized version of FileName (e.g., "Archaeologists")
 ///
 /// NOTE: .dfmod files are Unity asset bundles and cannot be parsed without Unity APIs.
-/// We use the folder name as a fallback for the title.
+/// We use the .dfmod filename itself to match Daggerfall Unity's behavior.
 pub fn parse_dfmod(mod_folder: &Path) -> Result<Vec<DfmodInfo>, String> {
     let mods_subfolder = mod_folder.join("Mods");
 
@@ -46,14 +39,8 @@ pub fn parse_dfmod(mod_folder: &Path) -> Result<Vec<DfmodInfo>, String> {
     }
 
     let mut results = Vec::new();
-    let folder_name = mod_folder
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Unknown")
-        .to_string();
 
-    // Check if there are any .dfmod files
-    let mut has_dfmod = false;
+    // Enumerate all .dfmod files and create an entry for each
     for entry in fs::read_dir(&mods_subfolder)
         .map_err(|e| format!("Failed to read Mods folder: {}", e))?
     {
@@ -61,17 +48,21 @@ pub fn parse_dfmod(mod_folder: &Path) -> Result<Vec<DfmodInfo>, String> {
         let path = entry.path();
 
         if path.is_file() && path.extension().map_or(false, |ext| ext == "dfmod") {
-            has_dfmod = true;
-            break;
-        }
-    }
+            // Get the filename without extension
+            let file_name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
 
-    // If we found at least one .dfmod file, create an entry for this mod
-    if has_dfmod {
-        results.push(DfmodInfo {
-            title: extract_title_from_folder_name(&folder_name),
-            file_name: folder_name,
-        });
+            // Capitalize for title
+            let title = capitalize_words(&file_name);
+
+            results.push(DfmodInfo {
+                file_name,
+                title,
+            });
+        }
     }
 
     Ok(results)
@@ -84,11 +75,11 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_extract_title_from_folder_name() {
-        assert_eq!(extract_title_from_folder_name("ArchaeologistsGuild-2.6.1"), "Archaeologists Guild");
-        assert_eq!(extract_title_from_folder_name("MyAwesomeMod-1.0"), "My Awesome Mod");
-        assert_eq!(extract_title_from_folder_name("simple"), "simple");
-        assert_eq!(extract_title_from_folder_name("Test-Mod-123"), "Test");
+    fn test_capitalize_words() {
+        assert_eq!(capitalize_words("archaeologists"), "Archaeologists");
+        assert_eq!(capitalize_words("aquatic sprites"), "Aquatic Sprites");
+        assert_eq!(capitalize_words("ambienttext"), "Ambienttext");
+        assert_eq!(capitalize_words("my awesome mod"), "My Awesome Mod");
     }
 
     #[test]
@@ -110,13 +101,35 @@ mod tests {
         let mods_subfolder = mod_path.join("Mods");
         fs::create_dir(&mods_subfolder).unwrap();
 
-        // Create a dummy .dfmod file (doesn't need real content)
-        fs::write(mods_subfolder.join("test.dfmod"), "binary data").unwrap();
+        // Create a .dfmod file (filename is what matters, not folder name)
+        fs::write(mods_subfolder.join("my awesome mod.dfmod"), "binary data").unwrap();
 
         let result = parse_dfmod(&mod_path).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].title, "Test Mod");
-        assert_eq!(result[0].file_name, "TestMod-1.0");
+        assert_eq!(result[0].file_name, "my awesome mod");
+        assert_eq!(result[0].title, "My Awesome Mod");
+    }
+
+    #[test]
+    fn test_parse_dfmod_multiple_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let mod_path = temp_dir.path().join("test_mod");
+        fs::create_dir(&mod_path).unwrap();
+
+        let mods_subfolder = mod_path.join("Mods");
+        fs::create_dir(&mods_subfolder).unwrap();
+
+        // Create multiple .dfmod files
+        fs::write(mods_subfolder.join("archaeologists.dfmod"), "binary").unwrap();
+        fs::write(mods_subfolder.join("aquatic sprites.dfmod"), "binary").unwrap();
+
+        let result = parse_dfmod(&mod_path).unwrap();
+        assert_eq!(result.len(), 2);
+
+        // Results should contain both files
+        let file_names: Vec<_> = result.iter().map(|r| r.file_name.as_str()).collect();
+        assert!(file_names.contains(&"archaeologists"));
+        assert!(file_names.contains(&"aquatic sprites"));
     }
 
     #[test]
