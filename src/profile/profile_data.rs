@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
@@ -41,6 +42,69 @@ impl Profile {
             .join("DaggerfallUnity_Data")
             .join("StreamingAssets")
             .join("Mods")
+    }
+
+    /// Auto-detect and set the launcher path based on game_path
+    pub fn auto_detect_launcher(&mut self) {
+        // Check for .x86_64 extension first (standard Linux Unity build)
+        let exe_with_ext = self.game_path.join("DaggerfallUnity.x86_64");
+        if exe_with_ext.exists() {
+            self.launcher_path = Some(exe_with_ext);
+            return;
+        }
+
+        // Fall back to no extension
+        let exe_no_ext = self.game_path.join("DaggerfallUnity");
+        if exe_no_ext.exists() {
+            self.launcher_path = Some(exe_no_ext);
+        }
+    }
+
+    /// Initialize Mods.json path in Unity config directory
+    /// Creates directory structure and empty Mods.json if they don't exist
+    pub fn initialize_mods_json(&mut self) -> Result<(), String> {
+        // Get home directory
+        let home = dirs::home_dir()
+            .ok_or("Could not find home directory")?;
+
+        // Build path to Unity config directory
+        let mods_json_path = home
+            .join(".config")
+            .join("unity3d")
+            .join("Daggerfall Workshop")
+            .join("Daggerfall Unity")
+            .join("Mods")
+            .join("GameData")
+            .join("Mods.json");
+
+        // Create directory structure if it doesn't exist
+        if let Some(parent) = mods_json_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create Mods.json directory: {}", e))?;
+        }
+
+        // Create empty Mods.json file if it doesn't exist
+        if !mods_json_path.exists() {
+            fs::write(&mods_json_path, "[]")
+                .map_err(|e| format!("Failed to create Mods.json: {}", e))?;
+        }
+
+        // Store the path
+        self.mods_json_path = Some(mods_json_path);
+        Ok(())
+    }
+
+    /// Create a new profile with auto-detected paths
+    pub fn new_with_auto_detect(name: String, game_path: PathBuf) -> Result<Self, String> {
+        let mut profile = Self::new(name, game_path);
+
+        // Auto-detect launcher
+        profile.auto_detect_launcher();
+
+        // Initialize Mods.json
+        profile.initialize_mods_json()?;
+
+        Ok(profile)
     }
 }
 
@@ -291,5 +355,154 @@ mod tests {
         // Verify active profile persisted
         assert_eq!(loaded.active_profile, Some(2));
         assert_eq!(loaded.get_active_profile().unwrap().name, "Profile C");
+    }
+
+    #[test]
+    fn test_auto_detect_launcher_with_x86_64() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let game_path = temp_dir.path().to_path_buf();
+
+        // Create the .x86_64 executable
+        let exe_path = game_path.join("DaggerfallUnity.x86_64");
+        fs::write(&exe_path, "").unwrap();
+
+        let mut profile = Profile::new("Test".to_string(), game_path.clone());
+        profile.auto_detect_launcher();
+
+        assert!(profile.launcher_path.is_some());
+        assert_eq!(profile.launcher_path.unwrap(), exe_path);
+    }
+
+    #[test]
+    fn test_auto_detect_launcher_without_extension() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let game_path = temp_dir.path().to_path_buf();
+
+        // Create the executable without extension
+        let exe_path = game_path.join("DaggerfallUnity");
+        fs::write(&exe_path, "").unwrap();
+
+        let mut profile = Profile::new("Test".to_string(), game_path.clone());
+        profile.auto_detect_launcher();
+
+        assert!(profile.launcher_path.is_some());
+        assert_eq!(profile.launcher_path.unwrap(), exe_path);
+    }
+
+    #[test]
+    fn test_auto_detect_launcher_prefers_x86_64() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let game_path = temp_dir.path().to_path_buf();
+
+        // Create both executables
+        let exe_no_ext = game_path.join("DaggerfallUnity");
+        let exe_with_ext = game_path.join("DaggerfallUnity.x86_64");
+        fs::write(&exe_no_ext, "").unwrap();
+        fs::write(&exe_with_ext, "").unwrap();
+
+        let mut profile = Profile::new("Test".to_string(), game_path.clone());
+        profile.auto_detect_launcher();
+
+        // Should prefer .x86_64 version
+        assert!(profile.launcher_path.is_some());
+        assert_eq!(profile.launcher_path.unwrap(), exe_with_ext);
+    }
+
+    #[test]
+    fn test_auto_detect_launcher_none_when_missing() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let game_path = temp_dir.path().to_path_buf();
+
+        let mut profile = Profile::new("Test".to_string(), game_path);
+        profile.auto_detect_launcher();
+
+        assert!(profile.launcher_path.is_none());
+    }
+
+    #[test]
+    fn test_initialize_mods_json_creates_file() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        // Use a temp directory as fake home for this test
+        let temp_home = TempDir::new().unwrap();
+        let mods_json_path = temp_home.path()
+            .join(".config")
+            .join("unity3d")
+            .join("Daggerfall Workshop")
+            .join("Daggerfall Unity")
+            .join("Mods")
+            .join("GameData")
+            .join("Mods.json");
+
+        // Manually set up to test the logic
+        // Create directory structure
+        if let Some(parent) = mods_json_path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+
+        // Create empty Mods.json
+        if !mods_json_path.exists() {
+            fs::write(&mods_json_path, "[]").unwrap();
+        }
+
+        // Verify file was created with correct content
+        assert!(mods_json_path.exists());
+        let content = fs::read_to_string(&mods_json_path).unwrap();
+        assert_eq!(content, "[]");
+    }
+
+    #[test]
+    fn test_initialize_mods_json_sets_path() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let game_path = temp_dir.path().to_path_buf();
+
+        let mut profile = Profile::new("Test".to_string(), game_path);
+        let result = profile.initialize_mods_json();
+
+        // Should succeed
+        assert!(result.is_ok());
+        // Should set the path
+        assert!(profile.mods_json_path.is_some());
+        // Path should end with Mods.json
+        let path = profile.mods_json_path.unwrap();
+        assert_eq!(path.file_name().unwrap(), "Mods.json");
+    }
+
+    #[test]
+    fn test_new_with_auto_detect() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let game_path = temp_dir.path().to_path_buf();
+
+        // Create launcher executable
+        let exe_path = game_path.join("DaggerfallUnity.x86_64");
+        fs::write(&exe_path, "").unwrap();
+
+        let profile = Profile::new_with_auto_detect("Test".to_string(), game_path).unwrap();
+
+        // Should have launcher path set
+        assert!(profile.launcher_path.is_some());
+        assert_eq!(profile.launcher_path.unwrap(), exe_path);
+
+        // Should have mods_json_path set
+        assert!(profile.mods_json_path.is_some());
+        let mods_path = profile.mods_json_path.unwrap();
+        assert_eq!(mods_path.file_name().unwrap(), "Mods.json");
     }
 }

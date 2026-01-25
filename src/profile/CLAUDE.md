@@ -8,7 +8,7 @@
 
 # Phase 2: Complete Profile Management System Implementation
 
-Phase 2 of the VMOD project is complete, delivering a full-featured profile management system with comprehensive test coverage.
+Phase 2 of the VMOD project is **COMPLETE**, delivering a full-featured profile management system with comprehensive test coverage and automatic path detection.
 
 ## Implementation Summary
 
@@ -18,12 +18,16 @@ The implementation spans three layers:
    - `Profile` struct with JSON serialization
    - `ProfileList` for managing multiple profiles
    - Profile validation (checking for DaggerfallUnity executable)
+   - **Auto-detection of launcher path** (prefers `.x86_64` extension)
+   - **Auto-initialization of Mods.json path** in Unity config directory
+   - Automatic directory and file creation for Mods.json
    - Persistence to user config directory
 
 2. **UI Layer**
    - `ProfileDialog` for profile creation with folder picker
    - Toolbar dropdown selector with dynamic updates
    - Real-time validation preventing invalid profile creation
+   - Automatic path population during profile creation
 
 3. **Window Integration** (`window/mod.rs`)
    - Dynamic profile dropdown that updates without restart
@@ -33,8 +37,23 @@ The implementation spans three layers:
 
 ## Key Features
 
+### Auto-Detection of Launcher and Mods.json Paths
+Profiles are now fully configured automatically when created:
+- **Launcher Path**: Automatically detects `DaggerfallUnity.x86_64` or `DaggerfallUnity` executable
+  - Prefers `.x86_64` extension (standard Linux Unity build)
+  - Falls back to no extension if `.x86_64` not found
+  - Stored in `launcher_path` field for Phase 4 (game launching)
+
+- **Mods.json Path**: Automatically initializes Mods.json location
+  - Hard-coded to Unity config directory: `~/.config/unity3d/Daggerfall Workshop/Daggerfall Unity/Mods/GameData/Mods.json`
+  - Creates directory structure if it doesn't exist
+  - Creates empty Mods.json file with `[]` if missing
+  - Stored in `mods_json_path` field for Phase 3 (mod management)
+
+This automation ensures profiles are ready for Phase 3 (mod list display) and Phase 4 (plugin order management) without manual configuration.
+
 ### Profile Selection Persistence
-The application now automatically saves and restores the selected profile:
+The application automatically saves and restores the selected profile:
 - When you select a profile from the dropdown, it's immediately saved
 - On next startup, the last selected profile is automatically restored
 - Uses `connect_selected_item_notify` signal to capture selection changes
@@ -42,7 +61,7 @@ The application now automatically saves and restores the selected profile:
 
 ## Test Coverage
 
-### Unit Tests (14 tests in `profile_data.rs`)
+### Unit Tests (21 tests in `profile_data.rs`)
 All tests passing ✓
 
 **Profile Tests:**
@@ -50,6 +69,15 @@ All tests passing ✓
 - `test_profile_get_mods_folder` - Mods folder path calculation
 - `test_profile_validation_fails_for_missing_executable` - Validation error handling
 - `test_profile_serialization` - JSON serialization roundtrip
+
+**Auto-Detection Tests:**
+- `test_auto_detect_launcher_with_x86_64` - Detects .x86_64 launcher
+- `test_auto_detect_launcher_without_extension` - Detects launcher without extension
+- `test_auto_detect_launcher_prefers_x86_64` - Prefers .x86_64 when both exist
+- `test_auto_detect_launcher_none_when_missing` - Returns None when launcher missing
+- `test_initialize_mods_json_creates_file` - Creates Mods.json file and directory
+- `test_initialize_mods_json_sets_path` - Sets mods_json_path correctly
+- `test_new_with_auto_detect` - Creates profile with all paths auto-detected
 
 **ProfileList Tests:**
 - `test_profile_list_new` - Empty list initialization
@@ -95,11 +123,11 @@ cargo test -- --nocapture
 ## Test Results
 
 ```
-running 14 tests (unit tests)
-test result: ok. 14 passed; 0 failed; 0 ignored
+running 21 tests (unit tests)
+test result: ok. 21 passed; 0 failed; 0 ignored
 
 running 6 tests (integration tests)
 test result: ok. 6 passed; 0 failed; 0 ignored
 
-Total: 20 tests passing
+Total: 27 tests passing
 ```

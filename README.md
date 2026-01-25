@@ -2,12 +2,22 @@
 
 A GTK4-based mod manager for Daggerfall Unity, written in Rust.
 
-## Features (Phase 1)
+## Features
 
+### Phase 1 (Complete)
 - Modern GTK4 interface with Wayland support
 - Menu bar with File and Edit menus
 - Keyboard shortcuts (Ctrl+Q to quit, Ctrl+, for preferences)
 - Window state persistence (size and maximized state)
+
+### Phase 2 (Complete)
+- Profile management system
+- Profile creation with game folder selection
+- Auto-detection of launcher executable (DaggerfallUnity.x86_64)
+- Auto-initialization of Mods.json path
+- Profile dropdown selector with dynamic updates
+- Profile selection persistence across sessions
+- Full test coverage (27 tests)
 
 ## Build Requirements
 
@@ -74,7 +84,7 @@ vmod/
 ## Development Roadmap
 
 - **Phase 1** (Complete): GTK4 foundation with menu bar
-- **Phase 2**: Profile management
+- **Phase 2** (Complete): Profile management with auto-detection
 - **Phase 3**: Mod list display and virtual filesystem
 - **Phase 4**: Plugin order management (Mods.json)
 - **Phase 5**: Download manager with Nexus integration

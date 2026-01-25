@@ -2,9 +2,32 @@
 
 ## Profile Management
 
+### Automatic Path Detection
+
+When creating a new profile, VMOD automatically detects and configures required paths:
+
+**Launcher Path Auto-Detection:**
+- Automatically detects the game launcher executable
+- Prefers `DaggerfallUnity.x86_64` (standard Linux Unity build)
+- Falls back to `DaggerfallUnity` if .x86_64 not found
+- No manual configuration needed
+
+**Mods.json Path Auto-Initialization:**
+- Automatically sets up the Mods.json configuration file
+- Location: `~/.config/unity3d/Daggerfall Workshop/Daggerfall Unity/Mods/GameData/Mods.json`
+- Creates directory structure if it doesn't exist
+- Creates empty Mods.json file with `[]` if missing
+- Ready for Phase 3 (mod management) and Phase 4 (plugin order)
+
+**User Experience:**
+- Just select your game folder when creating a profile
+- All paths are automatically configured
+- Profile is ready to use immediately
+- No manual path entry required
+
 ### Profile Selection Persistence
 
-The application now remembers which profile is selected across sessions.
+The application remembers which profile is selected across sessions.
 
 **How it works:**
 1. **On Startup**: The application loads the profile list and automatically selects the last active profile in the dropdown
@@ -42,6 +65,12 @@ The profile dropdown updates in real-time when you create a new profile:
 ## Testing
 
 All profile management features are thoroughly tested:
-- **14 unit tests** covering core functionality
+- **21 unit tests** covering core functionality
+  - Profile creation and serialization
+  - Launcher path auto-detection (4 tests)
+  - Mods.json initialization (3 tests)
+  - Profile list management
+  - Active profile persistence
 - **6 integration tests** for workflows
-- Test coverage includes profile persistence, selection, and validation
+- **Total: 27 tests passing**
+- Test coverage includes profile persistence, selection, validation, and auto-detection

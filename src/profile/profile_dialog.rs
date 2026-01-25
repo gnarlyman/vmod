@@ -123,17 +123,26 @@ impl ProfileDialog {
             }
 
             if let Some(game_path) = game_path_opt {
-                let profile = Profile::new(name, game_path);
+                // Create profile with auto-detection
+                let profile_result = Profile::new_with_auto_detect(name, game_path);
 
-                // Validate game installation
-                match profile.validate_game_installation() {
-                    Ok(_) => {
-                        *result_clone.borrow_mut() = Some(profile);
-                        window_clone.close();
+                match profile_result {
+                    Ok(profile) => {
+                        // Validate game installation
+                        match profile.validate_game_installation() {
+                            Ok(_) => {
+                                *result_clone.borrow_mut() = Some(profile);
+                                window_clone.close();
+                            }
+                            Err(err) => {
+                                // TODO: Show error dialog with validation message
+                                eprintln!("Validation error: {}", err);
+                            }
+                        }
                     }
                     Err(err) => {
-                        // TODO: Show error dialog with validation message
-                        eprintln!("Validation error: {}", err);
+                        // TODO: Show error dialog with auto-detection error
+                        eprintln!("Auto-detection error: {}", err);
                     }
                 }
             }
