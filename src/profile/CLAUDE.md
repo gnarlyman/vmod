@@ -28,11 +28,21 @@ The implementation spans three layers:
 3. **Window Integration** (`window/mod.rs`)
    - Dynamic profile dropdown that updates without restart
    - Profile creation workflow
+   - **Profile selection persistence** - Remembers selected profile across sessions
    - State persistence
+
+## Key Features
+
+### Profile Selection Persistence
+The application now automatically saves and restores the selected profile:
+- When you select a profile from the dropdown, it's immediately saved
+- On next startup, the last selected profile is automatically restored
+- Uses `connect_selected_item_notify` signal to capture selection changes
+- Persists to `~/.config/vmod/profiles.json`
 
 ## Test Coverage
 
-### Unit Tests (13 tests in `profile_data.rs`)
+### Unit Tests (14 tests in `profile_data.rs`)
 All tests passing ✓
 
 **Profile Tests:**
@@ -51,6 +61,7 @@ All tests passing ✓
 - `test_profile_list_set_active_profile_invalid_index` - Invalid index handling
 - `test_profile_list_serialization` - JSON serialization
 - `test_profile_list_default` - Default trait implementation
+- `test_profile_active_changes_persist` - Active profile changes persist through serialization
 
 ### Integration Tests (6 tests in `tests/profile_integration_tests.rs`)
 All tests passing ✓
@@ -84,11 +95,11 @@ cargo test -- --nocapture
 ## Test Results
 
 ```
-running 13 tests (unit tests)
-test result: ok. 13 passed; 0 failed; 0 ignored
+running 14 tests (unit tests)
+test result: ok. 14 passed; 0 failed; 0 ignored
 
 running 6 tests (integration tests)
 test result: ok. 6 passed; 0 failed; 0 ignored
 
-Total: 19 tests passing
+Total: 20 tests passing
 ```

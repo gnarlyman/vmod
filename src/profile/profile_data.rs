@@ -261,4 +261,35 @@ mod tests {
         assert!(list.profiles.is_empty());
         assert!(list.active_profile.is_none());
     }
+
+    #[test]
+    fn test_profile_active_changes_persist() {
+        // Create a list with multiple profiles
+        let mut list = ProfileList::new();
+        list.add_profile(Profile::new("Profile A".to_string(), PathBuf::from("/pathA")));
+        list.add_profile(Profile::new("Profile B".to_string(), PathBuf::from("/pathB")));
+        list.add_profile(Profile::new("Profile C".to_string(), PathBuf::from("/pathC")));
+
+        // First profile should be active
+        assert_eq!(list.active_profile, Some(0));
+        assert_eq!(list.get_active_profile().unwrap().name, "Profile A");
+
+        // Change active profile to second one
+        list.set_active_profile(1);
+        assert_eq!(list.active_profile, Some(1));
+        assert_eq!(list.get_active_profile().unwrap().name, "Profile B");
+
+        // Change to third profile
+        list.set_active_profile(2);
+        assert_eq!(list.active_profile, Some(2));
+        assert_eq!(list.get_active_profile().unwrap().name, "Profile C");
+
+        // Serialize and deserialize to simulate save/load
+        let json = serde_json::to_string(&list).unwrap();
+        let loaded: ProfileList = serde_json::from_str(&json).unwrap();
+
+        // Verify active profile persisted
+        assert_eq!(loaded.active_profile, Some(2));
+        assert_eq!(loaded.get_active_profile().unwrap().name, "Profile C");
+    }
 }

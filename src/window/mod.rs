@@ -96,6 +96,31 @@ impl VmodWindow {
         // Store the dropdown reference for later updates
         self.imp().profile_dropdown.replace(Some(profile_dropdown.clone()));
 
+        // Set up dropdown selection handler to save active profile
+        profile_dropdown.connect_selected_item_notify(move |dropdown| {
+            let selected_index = dropdown.selected();
+
+            // Load profile list and update active profile
+            let mut profile_list = match crate::profile::profile_data::ProfileList::load() {
+                Ok(list) => list,
+                Err(e) => {
+                    eprintln!("Failed to load profiles: {}", e);
+                    return;
+                }
+            };
+
+            // Check if there are profiles and the selection is valid
+            if profile_list.profiles.is_empty() {
+                return;
+            }
+
+            // Update active profile and save
+            profile_list.set_active_profile(selected_index as usize);
+            if let Err(e) = profile_list.save() {
+                eprintln!("Failed to save active profile: {}", e);
+            }
+        });
+
         // Create new profile button
         let new_profile_button = Button::with_label("New Profile...");
         profile_box.append(&new_profile_button);
