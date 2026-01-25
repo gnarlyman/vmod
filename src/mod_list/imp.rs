@@ -2,7 +2,7 @@ use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use gtk4::{
     glib, gio, Box, Button, ColumnView, ColumnViewColumn, Label, Orientation, ScrolledWindow,
-    SignalListItemFactory, SingleSelection, CheckButton, SearchEntry, Paned,
+    SignalListItemFactory, SingleSelection, CheckButton, SearchEntry, Paned, UriLauncher,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -14,11 +14,14 @@ use crate::mods_json_view::ModsJsonView;
 pub struct ModListView {
     pub column_view: RefCell<Option<ColumnView>>,
     pub model: RefCell<Option<gio::ListStore>>,
+    pub selection_model: RefCell<Option<SingleSelection>>,
     pub vfs: RefCell<Option<VirtualFileSystem>>,
     pub search_entry: RefCell<Option<SearchEntry>>,
     pub profile_name: Rc<RefCell<Option<String>>>,
     pub mods_json_view: RefCell<Option<ModsJsonView>>,
     pub mods_json_path: RefCell<Option<PathBuf>>,
+    pub paned: RefCell<Option<Paned>>,
+    pub settings: RefCell<Option<gio::Settings>>,
 }
 
 impl Default for ModListView {
@@ -26,11 +29,14 @@ impl Default for ModListView {
         Self {
             column_view: RefCell::new(None),
             model: RefCell::new(None),
+            selection_model: RefCell::new(None),
             vfs: RefCell::new(None),
             search_entry: RefCell::new(None),
             profile_name: Rc::new(RefCell::new(None)),
             mods_json_view: RefCell::new(None),
             mods_json_path: RefCell::new(None),
+            paned: RefCell::new(None),
+            settings: RefCell::new(None),
         }
     }
 }
@@ -49,6 +55,10 @@ impl ObjectImpl for ModListView {
         let obj = self.obj();
         obj.set_orientation(Orientation::Vertical);
         obj.set_spacing(6);
+
+        // Initialize settings
+        let settings = gio::Settings::new(crate::config::APP_ID);
+        self.settings.replace(Some(settings.clone()));
 
         // Create horizontal Paned (resizable split)
         let paned = Paned::new(Orientation::Horizontal);
@@ -80,9 +90,10 @@ impl ObjectImpl for ModListView {
         let selection_model = SingleSelection::new(Some(model.clone()));
         selection_model.set_autoselect(false);
         selection_model.set_can_unselect(true);
+        self.selection_model.replace(Some(selection_model.clone()));
 
         // Create ColumnView
-        let column_view = ColumnView::new(Some(selection_model));
+        let column_view = ColumnView::new(Some(selection_model.clone()));
         column_view.set_show_row_separators(true);
         column_view.set_show_column_separators(true);
 
@@ -91,7 +102,7 @@ impl ObjectImpl for ModListView {
         self.add_name_column(&column_view);
         self.add_version_column(&column_view);
         self.add_order_column(&column_view);
-        self.add_actions_column(&column_view);
+        self.add_nexus_column(&column_view);
 
         // Wrap in scrolled window
         let scrolled_window = ScrolledWindow::new();
@@ -101,6 +112,104 @@ impl ObjectImpl for ModListView {
 
         left_box.append(&scrolled_window);
 
+        // Add reorder buttons below the list
+        let button_box = Box::new(Orientation::Horizontal, 6);
+        button_box.set_halign(gtk4::Align::Center);
+        button_box.set_margin_top(6);
+
+        let top_button = Button::with_label("⇈ Top");
+        let up_button = Button::with_label("↑ Up");
+        let down_button = Button::with_label("↓ Down");
+        let bottom_button = Button::with_label("⇊ Bottom");
+
+        // Add separator
+        let separator = gtk4::Separator::new(Orientation::Vertical);
+        separator.set_margin_start(6);
+        separator.set_margin_end(6);
+
+        let enable_all_button = Button::with_label("Enable All");
+        let disable_all_button = Button::with_label("Disable All");
+
+        button_box.append(&top_button);
+        button_box.append(&up_button);
+        button_box.append(&down_button);
+        button_box.append(&bottom_button);
+        button_box.append(&separator);
+        button_box.append(&enable_all_button);
+        button_box.append(&disable_all_button);
+
+        left_box.append(&button_box);
+
+        // Store references needed for button callbacks
+        let model_ref = self.model.clone();
+        let vfs_ref = self.vfs.clone();
+        let profile_name_ref = self.profile_name.clone();
+
+        // Connect buttons to move selected mod
+        let selection_model_clone = column_view.model().unwrap();
+        let selection = selection_model_clone.downcast::<SingleSelection>().unwrap();
+
+        let selection_clone = selection.clone();
+        let model_clone = model_ref.clone();
+        let vfs_clone = vfs_ref.clone();
+        let profile_clone = profile_name_ref.clone();
+        top_button.connect_clicked(move |_| {
+            if let Some(item) = selection_clone.selected_item() {
+                if let Ok(mod_entry) = item.downcast::<ModEntry>() {
+                    Self::move_mod_to_top_static(&model_clone, &mod_entry, &vfs_clone, &profile_clone, &selection_clone);
+                }
+            }
+        });
+
+        let selection_clone = selection.clone();
+        let model_clone = model_ref.clone();
+        let vfs_clone = vfs_ref.clone();
+        let profile_clone = profile_name_ref.clone();
+        up_button.connect_clicked(move |_| {
+            if let Some(item) = selection_clone.selected_item() {
+                if let Ok(mod_entry) = item.downcast::<ModEntry>() {
+                    Self::move_mod_up_static(&model_clone, &mod_entry, &vfs_clone, &profile_clone, &selection_clone);
+                }
+            }
+        });
+
+        let selection_clone = selection.clone();
+        let model_clone = model_ref.clone();
+        let vfs_clone = vfs_ref.clone();
+        let profile_clone = profile_name_ref.clone();
+        down_button.connect_clicked(move |_| {
+            if let Some(item) = selection_clone.selected_item() {
+                if let Ok(mod_entry) = item.downcast::<ModEntry>() {
+                    Self::move_mod_down_static(&model_clone, &mod_entry, &vfs_clone, &profile_clone, &selection_clone);
+                }
+            }
+        });
+
+        let selection_clone = selection.clone();
+        let model_clone = model_ref.clone();
+        let vfs_clone = vfs_ref.clone();
+        let profile_clone = profile_name_ref.clone();
+        bottom_button.connect_clicked(move |_| {
+            if let Some(item) = selection_clone.selected_item() {
+                if let Ok(mod_entry) = item.downcast::<ModEntry>() {
+                    Self::move_mod_to_bottom_static(&model_clone, &mod_entry, &vfs_clone, &profile_clone, &selection_clone);
+                }
+            }
+        });
+
+        // Connect enable/disable all buttons
+        let model_clone = model_ref.clone();
+        let profile_clone = profile_name_ref.clone();
+        enable_all_button.connect_clicked(move |_| {
+            Self::enable_all_mods_static(&model_clone, &profile_clone);
+        });
+
+        let model_clone = model_ref.clone();
+        let profile_clone = profile_name_ref.clone();
+        disable_all_button.connect_clicked(move |_| {
+            Self::disable_all_mods_static(&model_clone, &profile_clone);
+        });
+
         paned.set_start_child(Some(&left_box));
 
         // Right side: Mods.json view
@@ -108,8 +217,19 @@ impl ObjectImpl for ModListView {
         self.mods_json_view.replace(Some(mods_json_view.clone()));
         paned.set_end_child(Some(&mods_json_view));
 
-        // Set default paned position (60% left, 40% right)
-        paned.set_position(700);
+        // Load saved paned position
+        let saved_position = settings.int("paned-position");
+        paned.set_position(saved_position);
+
+        // Save paned position when it changes
+        let settings_clone = settings.clone();
+        paned.connect_position_notify(move |paned| {
+            let position = paned.position();
+            settings_clone.set_int("paned-position", position).ok();
+        });
+
+        // Store paned reference
+        self.paned.replace(Some(paned.clone()));
 
         obj.append(&paned);
 
@@ -305,28 +425,20 @@ impl ModListView {
         column_view.append_column(&column);
     }
 
-    fn add_actions_column(&self, column_view: &ColumnView) {
+    fn add_nexus_column(&self, column_view: &ColumnView) {
         let factory = SignalListItemFactory::new();
 
-        // Setup: Create the button box
+        // Setup phase: Create button widget
         factory.connect_setup(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
-            let button_box = Box::new(Orientation::Horizontal, 2);
 
-            let up_button = Button::with_label("↑");
-            let down_button = Button::with_label("↓");
-
-            button_box.append(&up_button);
-            button_box.append(&down_button);
-            list_item.set_child(Some(&button_box));
+            let button = Button::with_label("Open on Nexus");
+            button.add_css_class("flat");
+            list_item.set_child(Some(&button));
         });
 
-        // Bind: Connect the buttons to the ModEntry
-        let model_ref = self.model.clone();
-        let vfs_ref = self.vfs.clone();
-        let profile_name_ref = self.profile_name.clone();
-
+        // Bind phase: Connect button click to open URL
         factory.connect_bind(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
@@ -336,44 +448,48 @@ impl ModListView {
                 .and_downcast::<ModEntry>()
                 .expect("Item must be ModEntry");
 
-            let button_box = list_item
+            let button = list_item
                 .child()
-                .and_downcast::<Box>()
-                .expect("Child must be Box");
-
-            let up_button = button_box
-                .first_child()
                 .and_downcast::<Button>()
-                .expect("First child must be Button");
+                .expect("Child must be Button");
 
-            let down_button = button_box
-                .last_child()
-                .and_downcast::<Button>()
-                .expect("Last child must be Button");
+            // Get nexus_id and configure button state
+            let nexus_id = mod_entry.nexus_id();
 
-            // Connect up button
-            let model_clone = model_ref.clone();
-            let vfs_clone = vfs_ref.clone();
-            let profile_name_clone = profile_name_ref.clone();
-            let mod_entry_clone = mod_entry.clone();
+            if let Some(id) = nexus_id {
+                button.set_sensitive(true);
+                button.set_tooltip_text(Some(&format!("Open mod {} on Nexus Mods", id)));
 
-            up_button.connect_clicked(move |_| {
-                Self::move_mod_up_static(&model_clone, &mod_entry_clone, &vfs_clone, &profile_name_clone);
-            });
+                // Connect click handler to open URL
+                let id_clone = id.clone();
+                button.connect_clicked(move |btn| {
+                    let url = format!("https://www.nexusmods.com/daggerfallunity/mods/{}", id_clone);
 
-            // Connect down button
-            let model_clone = model_ref.clone();
-            let vfs_clone = vfs_ref.clone();
-            let profile_name_clone = profile_name_ref.clone();
-            let mod_entry_clone = mod_entry.clone();
+                    // Get parent window for UriLauncher
+                    let root = btn.root();
+                    if let Some(window) = root.and_downcast::<gtk4::Window>() {
+                        // Create UriLauncher and open URL
+                        let launcher = UriLauncher::new(&url);
 
-            down_button.connect_clicked(move |_| {
-                Self::move_mod_down_static(&model_clone, &mod_entry_clone, &vfs_clone, &profile_name_clone);
-            });
+                        // Launch asynchronously
+                        launcher.launch(Some(&window), gio::Cancellable::NONE, |result| {
+                            if let Err(e) = result {
+                                eprintln!("Failed to open URL: {}", e);
+                            }
+                        });
+                    } else {
+                        eprintln!("Could not find parent window for UriLauncher");
+                    }
+                });
+            } else {
+                // No Nexus ID - disable button
+                button.set_sensitive(false);
+                button.set_tooltip_text(Some("This mod is not from Nexus Mods"));
+            }
         });
 
-        let column = ColumnViewColumn::new(Some("Actions"), Some(factory));
-        column.set_fixed_width(100);
+        let column = ColumnViewColumn::new(Some("Nexus"), Some(factory));
+        column.set_fixed_width(150);
         column_view.append_column(&column);
     }
 
@@ -559,7 +675,8 @@ impl ModListView {
         model: &RefCell<Option<gio::ListStore>>,
         mod_entry: &ModEntry,
         _vfs: &RefCell<Option<VirtualFileSystem>>,
-        profile_name: &Rc<RefCell<Option<String>>>
+        profile_name: &Rc<RefCell<Option<String>>>,
+        selection: &SingleSelection
     ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
@@ -598,6 +715,11 @@ impl ModListView {
                 model_store.append(&mod_entry);
             }
 
+            // Restore selection at new position (moved up by 1)
+            if position > 0 {
+                selection.set_selected(position - 1);
+            }
+
             // Drop the borrow before calling static methods
             drop(model_borrow);
 
@@ -611,7 +733,8 @@ impl ModListView {
         model: &RefCell<Option<gio::ListStore>>,
         mod_entry: &ModEntry,
         _vfs: &RefCell<Option<VirtualFileSystem>>,
-        profile_name: &Rc<RefCell<Option<String>>>
+        profile_name: &Rc<RefCell<Option<String>>>,
+        selection: &SingleSelection
     ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
@@ -650,6 +773,11 @@ impl ModListView {
                 model_store.append(&mod_entry);
             }
 
+            // Restore selection at new position (moved down by 1)
+            if position < n_items - 1 {
+                selection.set_selected(position + 1);
+            }
+
             // Drop the borrow before calling static methods
             drop(model_borrow);
 
@@ -658,14 +786,175 @@ impl ModListView {
         }
     }
 
+    /// Move a mod to top of the list (static version for closures)
+    fn move_mod_to_top_static(
+        model: &RefCell<Option<gio::ListStore>>,
+        mod_entry: &ModEntry,
+        _vfs: &RefCell<Option<VirtualFileSystem>>,
+        profile_name: &Rc<RefCell<Option<String>>>,
+        selection: &SingleSelection
+    ) {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
+            let position = Self::find_mod_position(model_store, mod_entry);
+
+            if position == 0 {
+                return; // Already at top
+            }
+
+            // Set this mod's order to 0
+            let current_order = mod_entry.order();
+            mod_entry.set_order(0);
+
+            // Shift all mods with order < current_order down by 1
+            for i in 0..model_store.n_items() {
+                if let Some(item) = model_store.item(i) {
+                    if let Ok(entry) = item.downcast::<ModEntry>() {
+                        if entry.order() < current_order && entry.name() != mod_entry.name() {
+                            entry.set_order(entry.order() + 1);
+                        }
+                    }
+                }
+            }
+
+            // Collect all items and sort by order
+            let n_items = model_store.n_items();
+            let mut mods: Vec<ModEntry> = Vec::new();
+            for i in 0..n_items {
+                if let Some(item) = model_store.item(i) {
+                    if let Ok(entry) = item.downcast::<ModEntry>() {
+                        mods.push(entry);
+                    }
+                }
+            }
+            mods.sort_by_key(|m| m.order());
+
+            // Clear and re-populate model in sorted order
+            model_store.remove_all();
+            for mod_entry in mods {
+                model_store.append(&mod_entry);
+            }
+
+            // Restore selection at position 0 (top)
+            selection.set_selected(0);
+
+            drop(model_borrow);
+            Self::save_mod_state_static(model, profile_name);
+        }
+    }
+
+    /// Move a mod to bottom of the list (static version for closures)
+    fn move_mod_to_bottom_static(
+        model: &RefCell<Option<gio::ListStore>>,
+        mod_entry: &ModEntry,
+        _vfs: &RefCell<Option<VirtualFileSystem>>,
+        profile_name: &Rc<RefCell<Option<String>>>,
+        selection: &SingleSelection
+    ) {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
+            let position = Self::find_mod_position(model_store, mod_entry);
+            let last_position = model_store.n_items() - 1;
+
+            if position >= last_position {
+                return; // Already at bottom
+            }
+
+            // Set this mod's order to last
+            let current_order = mod_entry.order();
+            mod_entry.set_order(last_position);
+
+            // Shift all mods with order > current_order up by 1
+            for i in 0..model_store.n_items() {
+                if let Some(item) = model_store.item(i) {
+                    if let Ok(entry) = item.downcast::<ModEntry>() {
+                        if entry.order() > current_order && entry.name() != mod_entry.name() {
+                            entry.set_order(entry.order() - 1);
+                        }
+                    }
+                }
+            }
+
+            // Collect all items and sort by order
+            let n_items = model_store.n_items();
+            let mut mods: Vec<ModEntry> = Vec::new();
+            for i in 0..n_items {
+                if let Some(item) = model_store.item(i) {
+                    if let Ok(entry) = item.downcast::<ModEntry>() {
+                        mods.push(entry);
+                    }
+                }
+            }
+            mods.sort_by_key(|m| m.order());
+
+            // Clear and re-populate model in sorted order
+            model_store.remove_all();
+            for mod_entry in mods {
+                model_store.append(&mod_entry);
+            }
+
+            // Restore selection at bottom position
+            selection.set_selected(last_position);
+
+            drop(model_borrow);
+            Self::save_mod_state_static(model, profile_name);
+        }
+    }
+
+    /// Enable all mods (static version for closures)
+    fn enable_all_mods_static(
+        model: &RefCell<Option<gio::ListStore>>,
+        profile_name: &Rc<RefCell<Option<String>>>
+    ) {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
+            // Enable all mods
+            for i in 0..model_store.n_items() {
+                if let Some(item) = model_store.item(i) {
+                    if let Ok(mod_entry) = item.downcast::<ModEntry>() {
+                        mod_entry.set_enabled(true);
+                    }
+                }
+            }
+
+            drop(model_borrow);
+            Self::save_mod_state_static(model, profile_name);
+        }
+    }
+
+    /// Disable all mods (static version for closures)
+    fn disable_all_mods_static(
+        model: &RefCell<Option<gio::ListStore>>,
+        profile_name: &Rc<RefCell<Option<String>>>
+    ) {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
+            // Disable all mods
+            for i in 0..model_store.n_items() {
+                if let Some(item) = model_store.item(i) {
+                    if let Ok(mod_entry) = item.downcast::<ModEntry>() {
+                        mod_entry.set_enabled(false);
+                    }
+                }
+            }
+
+            drop(model_borrow);
+            Self::save_mod_state_static(model, profile_name);
+        }
+    }
+
     /// Public API: Move a mod up
     pub fn move_mod_up(&self, mod_entry: &ModEntry) {
-        Self::move_mod_up_static(&self.model, mod_entry, &self.vfs, &self.profile_name);
+        if let Some(selection) = self.selection_model.borrow().as_ref() {
+            Self::move_mod_up_static(&self.model, mod_entry, &self.vfs, &self.profile_name, selection);
+        }
     }
 
     /// Public API: Move a mod down
     pub fn move_mod_down(&self, mod_entry: &ModEntry) {
-        Self::move_mod_down_static(&self.model, mod_entry, &self.vfs, &self.profile_name);
+        if let Some(selection) = self.selection_model.borrow().as_ref() {
+            Self::move_mod_down_static(&self.model, mod_entry, &self.vfs, &self.profile_name, selection);
+        }
     }
 
     /// Apply all changes: rebuild VFS and update Mods.json

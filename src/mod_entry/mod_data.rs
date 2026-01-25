@@ -5,6 +5,66 @@ use gtk4::subclass::prelude::*;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
+/// Parse Nexus Mods metadata from folder name
+/// Formats supported:
+/// - With space: "Mod Name 1.0-276-1-0-1642914017" → (version="1.0", id="276")
+/// - Without space: "ModName-2.6.1-14-2-6-1-1712582888" → (version="2.6.1", id="14")
+fn parse_nexus_metadata(folder_name: &str) -> (Option<String>, Option<String>) {
+    // Try splitting by space first (for "Mod Name 1.0-123-..." format)
+    let metadata_part = if let Some(space_pos) = folder_name.rfind(' ') {
+        // Has space - take everything after the last space
+        &folder_name[space_pos + 1..]
+    } else {
+        // No space - need to find where version-ID pattern starts
+        // Split by hyphens and find first segment that looks like a version
+        // followed by an all-numeric segment (the Nexus ID)
+        let parts: Vec<&str> = folder_name.split('-').collect();
+
+        for i in 0..parts.len().saturating_sub(1) {
+            let current = parts[i];
+            let next = parts[i + 1];
+
+            // Check if current part contains a digit (could be version like "2.6.1" or "1.0")
+            // and next part is all digits (the Nexus ID)
+            if current.chars().any(|c| c.is_ascii_digit())
+               && next.chars().all(|c| c.is_ascii_digit())
+               && !next.is_empty() {
+                // Found version-id pattern
+                return (
+                    Some(current.to_string()),
+                    Some(next.to_string())
+                );
+            }
+        }
+        return (None, None);
+    };
+
+    // Split metadata part by '-'
+    let components: Vec<&str> = metadata_part.split('-').collect();
+    if components.len() < 2 {
+        return (None, None);
+    }
+
+    let version = components[0].trim();
+    let nexus_id = components[1].trim();
+
+    // Validate version is not empty
+    let version_opt = if version.is_empty() {
+        None
+    } else {
+        Some(version.to_string())
+    };
+
+    // Validate nexus_id is numeric
+    let nexus_id_opt = if nexus_id.chars().all(|c| c.is_ascii_digit()) && !nexus_id.is_empty() {
+        Some(nexus_id.to_string())
+    } else {
+        None
+    };
+
+    (version_opt, nexus_id_opt)
+}
+
 mod imp {
     use super::*;
     use glib::Properties;
@@ -22,6 +82,8 @@ mod imp {
         #[property(get, set)]
         pub order: Cell<u32>,
         pub path: RefCell<PathBuf>,
+        #[property(get, set)]
+        pub nexus_id: RefCell<Option<String>>,
     }
 
     #[glib::object_subclass]
@@ -40,11 +102,18 @@ glib::wrapper! {
 
 impl ModEntry {
     pub fn new(name: String, path: PathBuf, order: u32) -> Self {
+        // Parse Nexus metadata from folder name
+        let (version, nexus_id) = parse_nexus_metadata(&name);
+
+        // Use parsed version or default to "Unknown"
+        let version = version.unwrap_or_else(|| "Unknown".to_string());
+
         let obj: Self = Object::builder()
             .property("name", &name)
-            .property("version", "1.0.0")
+            .property("version", &version)
             .property("enabled", false)
             .property("order", order)
+            .property("nexus-id", &nexus_id)
             .build();
 
         obj.imp().path.replace(path);
@@ -292,5 +361,91 @@ mod tests {
 
         // Should be invalid - Docs alone doesn't make it a valid mod
         assert!(!ModList::is_valid_mod_folder(&mod_path));
+    }
+
+    #[test]
+    fn test_parse_nexus_metadata() {
+        // 3-digit ID (with space)
+        assert_eq!(
+            parse_nexus_metadata("Aquatic Sprites 1.0-276-1-0-1642914017"),
+            (Some("1.0".to_string()), Some("276".to_string()))
+        );
+
+        // 2-digit ID (no space - hyphen goes straight to version)
+        assert_eq!(
+            parse_nexus_metadata("ArchaeologistsGuild-2.6.1-14-2-6-1-1712582888"),
+            (Some("2.6.1".to_string()), Some("14".to_string()))
+        );
+
+        // 3-digit ID
+        assert_eq!(
+            parse_nexus_metadata("Ambient Text 1.7-303-1-7-1743021606"),
+            (Some("1.7".to_string()), Some("303".to_string()))
+        );
+
+        // 1-digit ID
+        assert_eq!(
+            parse_nexus_metadata("Test Mod 1.0-5-1-0-1234567890"),
+            (Some("1.0".to_string()), Some("5".to_string()))
+        );
+
+        // 4-digit ID
+        assert_eq!(
+            parse_nexus_metadata("Big Mod 2.0-1234-5-6-1234567890"),
+            (Some("2.0".to_string()), Some("1234".to_string()))
+        );
+
+        // 5-digit ID (future-proofing)
+        assert_eq!(
+            parse_nexus_metadata("Huge Mod 3.0-12345-1-2-1234567890"),
+            (Some("3.0".to_string()), Some("12345".to_string()))
+        );
+
+        // Edge case: no metadata
+        assert_eq!(
+            parse_nexus_metadata("CustomMod"),
+            (None, None)
+        );
+
+        // Edge case: incomplete metadata
+        assert_eq!(
+            parse_nexus_metadata("Custom Mod 1.0"),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn test_mod_entry_with_nexus_metadata() {
+        // Test with space
+        let mod_entry = ModEntry::new(
+            "Aquatic Sprites 1.0-276-1-0-1642914017".to_string(),
+            PathBuf::from("/test/path"),
+            0,
+        );
+
+        assert_eq!(mod_entry.version(), "1.0");
+        assert_eq!(mod_entry.nexus_id(), Some("276".to_string()));
+
+        // Test without space
+        let mod_entry2 = ModEntry::new(
+            "ArchaeologistsGuild-2.6.1-14-2-6-1-1712582888".to_string(),
+            PathBuf::from("/test/path"),
+            1,
+        );
+
+        assert_eq!(mod_entry2.version(), "2.6.1");
+        assert_eq!(mod_entry2.nexus_id(), Some("14".to_string()));
+    }
+
+    #[test]
+    fn test_mod_entry_without_nexus_metadata() {
+        let mod_entry = ModEntry::new(
+            "CustomMod".to_string(),
+            PathBuf::from("/test/path"),
+            0,
+        );
+
+        assert_eq!(mod_entry.version(), "Unknown");
+        assert_eq!(mod_entry.nexus_id(), None);
     }
 }

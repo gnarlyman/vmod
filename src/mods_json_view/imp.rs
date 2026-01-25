@@ -12,6 +12,7 @@ use crate::mod_entry::{DfmodEntry, load_mods_json, save_mods_json};
 pub struct ModsJsonView {
     pub column_view: RefCell<Option<ColumnView>>,
     pub model: RefCell<Option<gio::ListStore>>,
+    pub selection_model: RefCell<Option<SingleSelection>>,
     pub mods_json_path: RefCell<Option<PathBuf>>,
 }
 
@@ -20,6 +21,7 @@ impl Default for ModsJsonView {
         Self {
             column_view: RefCell::new(None),
             model: RefCell::new(None),
+            selection_model: RefCell::new(None),
             mods_json_path: RefCell::new(None),
         }
     }
@@ -58,9 +60,10 @@ impl ObjectImpl for ModsJsonView {
         let selection_model = SingleSelection::new(Some(model.clone()));
         selection_model.set_autoselect(false);
         selection_model.set_can_unselect(true);
+        self.selection_model.replace(Some(selection_model.clone()));
 
         // Create ColumnView
-        let column_view = ColumnView::new(Some(selection_model));
+        let column_view = ColumnView::new(Some(selection_model.clone()));
         column_view.set_show_row_separators(true);
         column_view.set_show_column_separators(true);
 
@@ -69,7 +72,6 @@ impl ObjectImpl for ModsJsonView {
         self.add_title_column(&column_view);
         self.add_filename_column(&column_view);
         self.add_priority_column(&column_view);
-        self.add_actions_column(&column_view);
 
         // Wrap in scrolled window
         let scrolled_window = ScrolledWindow::new();
@@ -78,6 +80,93 @@ impl ObjectImpl for ModsJsonView {
         scrolled_window.set_child(Some(&column_view));
 
         obj.append(&scrolled_window);
+
+        // Add reorder buttons below the list
+        let button_box = Box::new(Orientation::Horizontal, 6);
+        button_box.set_halign(gtk4::Align::Center);
+        button_box.set_margin_top(6);
+        button_box.set_margin_bottom(6);
+
+        let top_button = Button::with_label("⇈ Top");
+        let up_button = Button::with_label("↑ Up");
+        let down_button = Button::with_label("↓ Down");
+        let bottom_button = Button::with_label("⇊ Bottom");
+
+        // Add separator
+        let separator = gtk4::Separator::new(Orientation::Vertical);
+        separator.set_margin_start(6);
+        separator.set_margin_end(6);
+
+        let enable_all_button = Button::with_label("Enable All");
+        let disable_all_button = Button::with_label("Disable All");
+
+        button_box.append(&top_button);
+        button_box.append(&up_button);
+        button_box.append(&down_button);
+        button_box.append(&bottom_button);
+        button_box.append(&separator);
+        button_box.append(&enable_all_button);
+        button_box.append(&disable_all_button);
+
+        obj.append(&button_box);
+
+        // Store model reference for button callbacks
+        let model_ref = self.model.clone();
+
+        // Connect buttons to move selected entry
+        let selection_model_clone = column_view.model().unwrap();
+        let selection = selection_model_clone.downcast::<SingleSelection>().unwrap();
+
+        let selection_clone = selection.clone();
+        let model_clone = model_ref.clone();
+        top_button.connect_clicked(move |_| {
+            if let Some(item) = selection_clone.selected_item() {
+                if let Ok(dfmod_entry) = item.downcast::<DfmodEntry>() {
+                    Self::move_entry_to_top_static(&model_clone, &dfmod_entry, &selection_clone);
+                }
+            }
+        });
+
+        let selection_clone = selection.clone();
+        let model_clone = model_ref.clone();
+        up_button.connect_clicked(move |_| {
+            if let Some(item) = selection_clone.selected_item() {
+                if let Ok(dfmod_entry) = item.downcast::<DfmodEntry>() {
+                    Self::move_entry_up_static(&model_clone, &dfmod_entry, &selection_clone);
+                }
+            }
+        });
+
+        let selection_clone = selection.clone();
+        let model_clone = model_ref.clone();
+        down_button.connect_clicked(move |_| {
+            if let Some(item) = selection_clone.selected_item() {
+                if let Ok(dfmod_entry) = item.downcast::<DfmodEntry>() {
+                    Self::move_entry_down_static(&model_clone, &dfmod_entry, &selection_clone);
+                }
+            }
+        });
+
+        let selection_clone = selection.clone();
+        let model_clone = model_ref.clone();
+        bottom_button.connect_clicked(move |_| {
+            if let Some(item) = selection_clone.selected_item() {
+                if let Ok(dfmod_entry) = item.downcast::<DfmodEntry>() {
+                    Self::move_entry_to_bottom_static(&model_clone, &dfmod_entry, &selection_clone);
+                }
+            }
+        });
+
+        // Connect enable/disable all buttons
+        let model_clone = model_ref.clone();
+        enable_all_button.connect_clicked(move |_| {
+            Self::enable_all_entries_static(&model_clone);
+        });
+
+        let model_clone = model_ref.clone();
+        disable_all_button.connect_clicked(move |_| {
+            Self::disable_all_entries_static(&model_clone);
+        });
 
         self.column_view.replace(Some(column_view));
     }
@@ -236,65 +325,6 @@ impl ModsJsonView {
         column_view.append_column(&column);
     }
 
-    fn add_actions_column(&self, column_view: &ColumnView) {
-        let factory = SignalListItemFactory::new();
-
-        factory.connect_setup(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
-                .expect("Item must be ListItem");
-            let button_box = Box::new(Orientation::Horizontal, 2);
-
-            let up_button = Button::with_label("↑");
-            let down_button = Button::with_label("↓");
-
-            button_box.append(&up_button);
-            button_box.append(&down_button);
-            list_item.set_child(Some(&button_box));
-        });
-
-        let model_ref = self.model.clone();
-        factory.connect_bind(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
-                .expect("Item must be ListItem");
-
-            let dfmod_entry = list_item
-                .item()
-                .and_downcast::<DfmodEntry>()
-                .expect("Item must be DfmodEntry");
-
-            let button_box = list_item
-                .child()
-                .and_downcast::<Box>()
-                .expect("Child must be Box");
-
-            let up_button = button_box
-                .first_child()
-                .and_downcast::<Button>()
-                .expect("First child must be Button");
-
-            let down_button = button_box
-                .last_child()
-                .and_downcast::<Button>()
-                .expect("Last child must be Button");
-
-            let model_clone = model_ref.clone();
-            let entry_clone = dfmod_entry.clone();
-            up_button.connect_clicked(move |_| {
-                Self::move_entry_up_static(&model_clone, &entry_clone);
-            });
-
-            let model_clone = model_ref.clone();
-            let entry_clone = dfmod_entry.clone();
-            down_button.connect_clicked(move |_| {
-                Self::move_entry_down_static(&model_clone, &entry_clone);
-            });
-        });
-
-        let column = ColumnViewColumn::new(Some("Actions"), Some(factory));
-        column.set_fixed_width(100);
-        column_view.append_column(&column);
-    }
-
     pub fn load_mods_json_static(&self, mods_json_path: &std::path::Path) {
         self.mods_json_path.replace(Some(mods_json_path.to_path_buf()));
 
@@ -348,7 +378,7 @@ impl ModsJsonView {
         save_mods_json(mods_json_path, &entries)
     }
 
-    fn move_entry_up_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry) {
+    fn move_entry_up_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry, selection: &SingleSelection) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
             let current_priority = entry.load_priority();
@@ -385,10 +415,15 @@ impl ModsJsonView {
             for dfmod_entry in entries {
                 model_store.append(&dfmod_entry);
             }
+
+            // Restore selection at new position (moved up by 1)
+            if current_priority > 0 {
+                selection.set_selected(current_priority - 1);
+            }
         }
     }
 
-    fn move_entry_down_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry) {
+    fn move_entry_down_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry, selection: &SingleSelection) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
             let current_priority = entry.load_priority();
@@ -426,6 +461,134 @@ impl ModsJsonView {
             model_store.remove_all();
             for dfmod_entry in entries {
                 model_store.append(&dfmod_entry);
+            }
+
+            // Restore selection at new position (moved down by 1)
+            if current_priority < max_priority {
+                selection.set_selected(current_priority + 1);
+            }
+        }
+    }
+
+    fn move_entry_to_top_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry, selection: &SingleSelection) {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
+            let current_priority = entry.load_priority();
+
+            if current_priority == 0 {
+                return; // Already at top
+            }
+
+            // Set this entry's priority to 0
+            entry.set_load_priority(0);
+
+            // Shift all entries with priority < current_priority down by 1
+            for i in 0..model_store.n_items() {
+                if let Some(obj) = model_store.item(i) {
+                    if let Ok(other_entry) = obj.downcast::<DfmodEntry>() {
+                        if other_entry.load_priority() < current_priority &&
+                           other_entry.file_name() != entry.file_name() {
+                            other_entry.set_load_priority(other_entry.load_priority() + 1);
+                        }
+                    }
+                }
+            }
+
+            // Re-sort the list by priority
+            let mut entries: Vec<DfmodEntry> = Vec::new();
+            for i in 0..model_store.n_items() {
+                if let Some(obj) = model_store.item(i) {
+                    if let Ok(dfmod_entry) = obj.downcast::<DfmodEntry>() {
+                        entries.push(dfmod_entry);
+                    }
+                }
+            }
+            entries.sort_by_key(|e| e.load_priority());
+
+            // Clear and re-populate in sorted order
+            model_store.remove_all();
+            for dfmod_entry in entries {
+                model_store.append(&dfmod_entry);
+            }
+
+            // Restore selection at position 0 (top)
+            selection.set_selected(0);
+        }
+    }
+
+    fn move_entry_to_bottom_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry, selection: &SingleSelection) {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
+            let current_priority = entry.load_priority();
+            let last_priority = (model_store.n_items() - 1) as u32;
+
+            if current_priority >= last_priority {
+                return; // Already at bottom
+            }
+
+            // Set this entry's priority to last
+            entry.set_load_priority(last_priority);
+
+            // Shift all entries with priority > current_priority up by 1
+            for i in 0..model_store.n_items() {
+                if let Some(obj) = model_store.item(i) {
+                    if let Ok(other_entry) = obj.downcast::<DfmodEntry>() {
+                        if other_entry.load_priority() > current_priority &&
+                           other_entry.file_name() != entry.file_name() {
+                            other_entry.set_load_priority(other_entry.load_priority() - 1);
+                        }
+                    }
+                }
+            }
+
+            // Re-sort the list by priority
+            let mut entries: Vec<DfmodEntry> = Vec::new();
+            for i in 0..model_store.n_items() {
+                if let Some(obj) = model_store.item(i) {
+                    if let Ok(dfmod_entry) = obj.downcast::<DfmodEntry>() {
+                        entries.push(dfmod_entry);
+                    }
+                }
+            }
+            entries.sort_by_key(|e| e.load_priority());
+
+            // Clear and re-populate in sorted order
+            model_store.remove_all();
+            for dfmod_entry in entries {
+                model_store.append(&dfmod_entry);
+            }
+
+            // Restore selection at bottom position
+            selection.set_selected(last_priority);
+        }
+    }
+
+    /// Enable all entries (static version for closures)
+    fn enable_all_entries_static(model: &RefCell<Option<gio::ListStore>>) {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
+            // Enable all entries
+            for i in 0..model_store.n_items() {
+                if let Some(item) = model_store.item(i) {
+                    if let Ok(dfmod_entry) = item.downcast::<DfmodEntry>() {
+                        dfmod_entry.set_enabled(true);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Disable all entries (static version for closures)
+    fn disable_all_entries_static(model: &RefCell<Option<gio::ListStore>>) {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
+            // Disable all entries
+            for i in 0..model_store.n_items() {
+                if let Some(item) = model_store.item(i) {
+                    if let Ok(dfmod_entry) = item.downcast::<DfmodEntry>() {
+                        dfmod_entry.set_enabled(false);
+                    }
+                }
             }
         }
     }
