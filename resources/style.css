@@ -1,7 +1,4 @@
+/* Highlight for associated dfmods - uses inset box-shadow to not interfere with selection */
 row.highlighted {
-    background-color: #3584e4;
-}
-
-row.highlighted * {
-    color: white;
+    box-shadow: inset 4px 0 0 0 #ff8c00;
 }
