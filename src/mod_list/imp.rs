@@ -511,17 +511,28 @@ impl ModListView {
     fn add_nexus_column(&self, column_view: &ColumnView) {
         let factory = SignalListItemFactory::new();
 
-        // Setup phase: Create button widget
+        // Setup phase: Create box with two icon buttons
         factory.connect_setup(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
-            let button = Button::with_label("Open on Nexus");
-            button.add_css_class("flat");
-            list_item.set_child(Some(&button));
+            let button_box = Box::new(Orientation::Horizontal, 4);
+            button_box.set_margin_end(16);
+
+            // Nexus button with external link icon
+            let nexus_button = Button::from_icon_name("go-jump-symbolic");
+            nexus_button.add_css_class("flat");
+
+            // Folder button with folder icon
+            let folder_button = Button::from_icon_name("folder-open-symbolic");
+            folder_button.add_css_class("flat");
+
+            button_box.append(&nexus_button);
+            button_box.append(&folder_button);
+            list_item.set_child(Some(&button_box));
         });
 
-        // Bind phase: Connect button click to open URL
+        // Bind phase: Connect button clicks
         factory.connect_bind(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
@@ -531,48 +542,101 @@ impl ModListView {
                 .and_downcast::<ModEntry>()
                 .expect("Item must be ModEntry");
 
-            let button = list_item
+            let button_box = list_item
                 .child()
-                .and_downcast::<Button>()
-                .expect("Child must be Button");
+                .and_downcast::<Box>()
+                .expect("Child must be Box");
 
-            // Get nexus_id and configure button state
+            // Get the buttons from the box
+            let nexus_button = button_box
+                .first_child()
+                .and_downcast::<Button>()
+                .expect("First child must be Button");
+
+            let folder_button = nexus_button
+                .next_sibling()
+                .and_downcast::<Button>()
+                .expect("Second child must be Button");
+
+            // Get nexus_id and configure nexus button state
             let nexus_id = mod_entry.nexus_id();
 
             if let Some(id) = nexus_id {
-                button.set_sensitive(true);
-                button.set_tooltip_text(Some(&format!("Open mod {} on Nexus Mods", id)));
+                nexus_button.set_sensitive(true);
+                nexus_button.set_tooltip_text(Some(&format!("Open mod {} on Nexus Mods", id)));
 
-                // Connect click handler to open URL
+                // Connect click handler to open Nexus URL
                 let id_clone = id.clone();
-                button.connect_clicked(move |btn| {
+                let handler_id = nexus_button.connect_clicked(move |btn| {
                     let url = format!("https://www.nexusmods.com/daggerfallunity/mods/{}", id_clone);
 
-                    // Get parent window for UriLauncher
                     let root = btn.root();
                     if let Some(window) = root.and_downcast::<gtk4::Window>() {
-                        // Create UriLauncher and open URL
                         let launcher = UriLauncher::new(&url);
-
-                        // Launch asynchronously
                         launcher.launch(Some(&window), gio::Cancellable::NONE, |result| {
                             if let Err(e) = result {
                                 eprintln!("Failed to open URL: {}", e);
                             }
                         });
-                    } else {
-                        eprintln!("Could not find parent window for UriLauncher");
                     }
                 });
+                unsafe { nexus_button.set_data("handler-id", handler_id); }
             } else {
-                // No Nexus ID - disable button
-                button.set_sensitive(false);
-                button.set_tooltip_text(Some("This mod is not from Nexus Mods"));
+                nexus_button.set_sensitive(false);
+                nexus_button.set_tooltip_text(Some("This mod is not from Nexus Mods"));
+            }
+
+            // Configure folder button - always enabled
+            let mod_path = mod_entry.path();
+            folder_button.set_sensitive(true);
+            folder_button.set_tooltip_text(Some(&format!("Open folder: {}", mod_path.display())));
+
+            let folder_handler_id = folder_button.connect_clicked(move |_btn| {
+                // Use the `open` crate for cross-platform folder opening
+                if let Err(e) = open::that(&mod_path) {
+                    eprintln!("Failed to open folder: {}", e);
+                }
+            });
+            unsafe { folder_button.set_data("folder-handler-id", folder_handler_id); }
+        });
+
+        // Unbind phase: Disconnect signal handlers
+        factory.connect_unbind(move |_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>()
+                .expect("Item must be ListItem");
+
+            let button_box = list_item
+                .child()
+                .and_downcast::<Box>()
+                .expect("Child must be Box");
+
+            let nexus_button = button_box
+                .first_child()
+                .and_downcast::<Button>()
+                .expect("First child must be Button");
+
+            let folder_button = nexus_button
+                .next_sibling()
+                .and_downcast::<Button>()
+                .expect("Second child must be Button");
+
+            // Disconnect nexus button handler if exists
+            unsafe {
+                if let Some(handler_id) = nexus_button.steal_data::<glib::SignalHandlerId>("handler-id") {
+                    nexus_button.disconnect(handler_id);
+                }
+            }
+
+            // Disconnect folder button handler
+            unsafe {
+                if let Some(handler_id) = folder_button.steal_data::<glib::SignalHandlerId>("folder-handler-id") {
+                    folder_button.disconnect(handler_id);
+                }
             }
         });
 
         let column = ColumnViewColumn::new(Some("Nexus"), Some(factory));
-        column.set_fixed_width(150);
+        column.set_fixed_width(100);
         column_view.append_column(&column);
     }
 
