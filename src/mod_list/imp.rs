@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use crate::mod_entry::{ModEntry, ModList, ModState, VirtualFileSystem, load_mods_json, generate_mods_json};
 use crate::mods_json_view::ModsJsonView;
+use crate::conflict_panel::ConflictPanel;
 
 pub struct ModListView {
     pub column_view: RefCell<Option<ColumnView>>,
@@ -22,6 +23,7 @@ pub struct ModListView {
     pub mods_json_path: RefCell<Option<PathBuf>>,
     pub paned: RefCell<Option<Paned>>,
     pub settings: RefCell<Option<gio::Settings>>,
+    pub conflict_panel: RefCell<Option<ConflictPanel>>,
 }
 
 impl Default for ModListView {
@@ -37,6 +39,7 @@ impl Default for ModListView {
             mods_json_path: RefCell::new(None),
             paned: RefCell::new(None),
             settings: RefCell::new(None),
+            conflict_panel: RefCell::new(None),
         }
     }
 }
@@ -217,16 +220,48 @@ impl ObjectImpl for ModListView {
         self.mods_json_view.replace(Some(mods_json_view.clone()));
         paned.set_end_child(Some(&mods_json_view));
 
-        // Highlight related dfmods when mod is selected
+        // Create conflict panel
+        let conflict_panel = ConflictPanel::new();
+        conflict_panel.set_margin_start(12);
+        conflict_panel.set_margin_end(12);
+        conflict_panel.set_margin_top(6);
+        self.conflict_panel.replace(Some(conflict_panel.clone()));
+
+        // Highlight related dfmods and update conflict panel when mod is selected
         let mods_json_view_clone = mods_json_view.clone();
+        let conflict_panel_clone = conflict_panel.clone();
+        let model_clone = self.model.clone();
         selection_model.connect_selected_item_notify(move |sel| {
             if let Some(mod_entry) = sel.selected_item().and_then(|i| i.downcast::<ModEntry>().ok()) {
+                // Highlight related dfmods
                 if let Ok(dfmods) = crate::mod_entry::parse_dfmod(&mod_entry.path()) {
                     mods_json_view_clone.highlight_entries(&dfmods.iter().map(|d| d.file_name.clone()).collect::<Vec<_>>());
-                    return;
                 }
+
+                // Update conflict panel
+                // Collect all enabled mods for conflict detection
+                let mut enabled_mods: Vec<(String, PathBuf)> = Vec::new();
+                if let Some(model) = model_clone.borrow().as_ref() {
+                    for i in 0..model.n_items() {
+                        if let Some(item) = model.item(i) {
+                            if let Ok(entry) = item.downcast::<ModEntry>() {
+                                if entry.enabled() {
+                                    enabled_mods.push((entry.name(), entry.path()));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                conflict_panel_clone.update_for_mod(
+                    &mod_entry.name(),
+                    &mod_entry.path(),
+                    &enabled_mods,
+                );
+            } else {
+                mods_json_view_clone.clear_highlights();
+                conflict_panel_clone.clear();
             }
-            mods_json_view_clone.clear_highlights();
         });
 
         // Load saved paned position
@@ -244,6 +279,9 @@ impl ObjectImpl for ModListView {
         self.paned.replace(Some(paned.clone()));
 
         obj.append(&paned);
+
+        // Add conflict panel between paned and Apply button
+        obj.append(&conflict_panel);
 
         // Add Apply button at the bottom (outside paned, spans full width)
         let button_box = Box::new(Orientation::Horizontal, 6);

@@ -4,3 +4,4 @@ pub mod config;
 pub mod mod_entry;
 pub mod mod_list;
 pub mod mods_json_view;
+pub mod conflict_panel;

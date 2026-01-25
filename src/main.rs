@@ -1,5 +1,6 @@
 mod application;
 mod config;
+mod conflict_panel;
 mod mod_entry;
 mod mod_list;
 mod mods_json_view;
