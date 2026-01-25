@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
-use gtk4::{glib, gio, CompositeTemplate, PopoverMenuBar, Box};
+use gtk4::{glib, gio, CompositeTemplate, PopoverMenuBar, Box, DropDown};
 use std::cell::RefCell;
 
 #[derive(Debug, Default, CompositeTemplate)]
@@ -12,6 +12,7 @@ pub struct VmodWindow {
     pub content_box: TemplateChild<Box>,
 
     pub settings: RefCell<Option<gio::Settings>>,
+    pub profile_dropdown: RefCell<Option<DropDown>>,
 }
 
 #[glib::object_subclass]

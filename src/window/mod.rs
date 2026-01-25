@@ -2,7 +2,7 @@ mod imp;
 
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
-use gtk4::{gio, glib, Application, Box, Button, DropDown, Label, Orientation};
+use gtk4::{gio, glib, Application, Box, Button, DropDown, Label, Orientation, StringList, StringObject};
 
 use crate::profile::ProfileDialog;
 
@@ -93,6 +93,9 @@ impl VmodWindow {
 
         profile_box.append(&profile_dropdown);
 
+        // Store the dropdown reference for later updates
+        self.imp().profile_dropdown.replace(Some(profile_dropdown.clone()));
+
         // Create new profile button
         let new_profile_button = Button::with_label("New Profile...");
         profile_box.append(&new_profile_button);
@@ -134,8 +137,48 @@ impl VmodWindow {
     }
 
     fn refresh_profile_ui(&self) {
-        // For now, just print a message
-        // TODO: Implement proper UI refresh
-        println!("Profile list updated - restart app to see changes");
+        // Load the updated profile list from disk
+        let profile_list = match crate::profile::profile_data::ProfileList::load() {
+            Ok(list) => list,
+            Err(e) => {
+                eprintln!("Failed to load profiles: {}", e);
+                return;
+            }
+        };
+
+        // Get the dropdown reference
+        let dropdown_ref = self.imp().profile_dropdown.borrow();
+        let dropdown = match dropdown_ref.as_ref() {
+            Some(d) => d,
+            None => {
+                eprintln!("Profile dropdown not initialized");
+                return;
+            }
+        };
+
+        // Create a new StringList with updated profile names
+        let profile_names: Vec<String> = profile_list
+            .profiles
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+
+        let string_list = if profile_names.is_empty() {
+            StringList::new(&["No profiles"])
+        } else {
+            StringList::new(&profile_names.iter().map(|s| s.as_str()).collect::<Vec<&str>>())
+        };
+
+        // Update the dropdown's model
+        dropdown.set_model(Some(&string_list));
+
+        // Set the expression to display the "string" property of StringObject items
+        let expression = StringObject::this_expression("string");
+        dropdown.set_expression(Some(&expression));
+
+        // Set the selected index to the newly added profile (last one)
+        if let Some(active) = profile_list.active_profile {
+            dropdown.set_selected(active as u32);
+        }
     }
 }

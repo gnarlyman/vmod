@@ -5,3 +5,90 @@
 
 *No recent activity*
 </claude-mem-context>
+
+# Phase 2: Complete Profile Management System Implementation
+
+Phase 2 of the VMOD project is complete, delivering a full-featured profile management system with comprehensive test coverage.
+
+## Implementation Summary
+
+The implementation spans three layers:
+
+1. **Data Layer** (`profile_data.rs`)
+   - `Profile` struct with JSON serialization
+   - `ProfileList` for managing multiple profiles
+   - Profile validation (checking for DaggerfallUnity executable)
+   - Persistence to user config directory
+
+2. **UI Layer**
+   - `ProfileDialog` for profile creation with folder picker
+   - Toolbar dropdown selector with dynamic updates
+   - Real-time validation preventing invalid profile creation
+
+3. **Window Integration** (`window/mod.rs`)
+   - Dynamic profile dropdown that updates without restart
+   - Profile creation workflow
+   - State persistence
+
+## Test Coverage
+
+### Unit Tests (13 tests in `profile_data.rs`)
+All tests passing ✓
+
+**Profile Tests:**
+- `test_profile_new` - Profile creation
+- `test_profile_get_mods_folder` - Mods folder path calculation
+- `test_profile_validation_fails_for_missing_executable` - Validation error handling
+- `test_profile_serialization` - JSON serialization roundtrip
+
+**ProfileList Tests:**
+- `test_profile_list_new` - Empty list initialization
+- `test_profile_list_add_profile` - Adding first profile (auto-activation)
+- `test_profile_list_add_multiple_profiles` - Multiple profile handling
+- `test_profile_list_get_active_profile` - Active profile retrieval
+- `test_profile_list_get_active_profile_empty` - Empty list handling
+- `test_profile_list_set_active_profile` - Active profile switching
+- `test_profile_list_set_active_profile_invalid_index` - Invalid index handling
+- `test_profile_list_serialization` - JSON serialization
+- `test_profile_list_default` - Default trait implementation
+
+### Integration Tests (6 tests in `tests/profile_integration_tests.rs`)
+All tests passing ✓
+
+**Serialization Tests:**
+- `test_profile_list_serialization_roundtrip` - Full save/load cycle
+- `test_empty_profile_list_serialization` - Empty list serialization
+- `test_profile_with_all_fields_serialization` - All optional fields populated
+- `test_profile_active_profile_serialization` - Active profile persistence
+- `test_json_compatibility` - Manual JSON parsing compatibility
+
+**Workflow Tests:**
+- `test_profile_workflow` - Complete user workflow simulation
+
+## Running Tests
+
+```bash
+# Run all tests
+cargo test
+
+# Run only unit tests
+cargo test --lib
+
+# Run only integration tests
+cargo test --test profile_integration_tests
+
+# Run with output
+cargo test -- --nocapture
+```
+
+## Test Results
+
+```
+running 13 tests (unit tests)
+test result: ok. 13 passed; 0 failed; 0 ignored
+
+running 6 tests (integration tests)
+test result: ok. 6 passed; 0 failed; 0 ignored
+
+Total: 19 tests passing
+```
