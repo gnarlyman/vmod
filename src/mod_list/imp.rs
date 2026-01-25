@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use gtk4::{
-    glib, gio, Box, ColumnView, ColumnViewColumn, Label, Orientation, ScrolledWindow,
+    glib, gio, Box, Button, ColumnView, ColumnViewColumn, Label, Orientation, ScrolledWindow,
     SignalListItemFactory, SingleSelection, CheckButton, SearchEntry,
 };
 use std::cell::RefCell;
@@ -74,6 +74,7 @@ impl ObjectImpl for ModListView {
         self.add_name_column(&column_view);
         self.add_version_column(&column_view);
         self.add_order_column(&column_view);
+        self.add_actions_column(&column_view);
 
         // Wrap in scrolled window
         let scrolled_window = ScrolledWindow::new();
@@ -260,6 +261,78 @@ impl ModListView {
         column_view.append_column(&column);
     }
 
+    fn add_actions_column(&self, column_view: &ColumnView) {
+        let factory = SignalListItemFactory::new();
+
+        // Setup: Create the button box
+        factory.connect_setup(move |_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>()
+                .expect("Item must be ListItem");
+            let button_box = Box::new(Orientation::Horizontal, 2);
+
+            let up_button = Button::with_label("↑");
+            let down_button = Button::with_label("↓");
+
+            button_box.append(&up_button);
+            button_box.append(&down_button);
+            list_item.set_child(Some(&button_box));
+        });
+
+        // Bind: Connect the buttons to the ModEntry
+        let model_ref = self.model.clone();
+        let vfs_ref = self.vfs.clone();
+        let profile_name_ref = self.profile_name.clone();
+
+        factory.connect_bind(move |_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>()
+                .expect("Item must be ListItem");
+
+            let mod_entry = list_item
+                .item()
+                .and_downcast::<ModEntry>()
+                .expect("Item must be ModEntry");
+
+            let button_box = list_item
+                .child()
+                .and_downcast::<Box>()
+                .expect("Child must be Box");
+
+            let up_button = button_box
+                .first_child()
+                .and_downcast::<Button>()
+                .expect("First child must be Button");
+
+            let down_button = button_box
+                .last_child()
+                .and_downcast::<Button>()
+                .expect("Last child must be Button");
+
+            // Connect up button
+            let model_clone = model_ref.clone();
+            let vfs_clone = vfs_ref.clone();
+            let profile_name_clone = profile_name_ref.clone();
+            let mod_entry_clone = mod_entry.clone();
+
+            up_button.connect_clicked(move |_| {
+                Self::move_mod_up_static(&model_clone, &mod_entry_clone, &vfs_clone, &profile_name_clone);
+            });
+
+            // Connect down button
+            let model_clone = model_ref.clone();
+            let vfs_clone = vfs_ref.clone();
+            let profile_name_clone = profile_name_ref.clone();
+            let mod_entry_clone = mod_entry.clone();
+
+            down_button.connect_clicked(move |_| {
+                Self::move_mod_down_static(&model_clone, &mod_entry_clone, &vfs_clone, &profile_name_clone);
+            });
+        });
+
+        let column = ColumnViewColumn::new(Some("Actions"), Some(factory));
+        column.set_fixed_width(100);
+        column_view.append_column(&column);
+    }
+
     pub fn load_mods(&self, mods_folder: &std::path::Path, game_mods_folder: &std::path::Path, profile_name: &str) {
         // Store profile name
         self.profile_name.replace(Some(profile_name.to_string()));
@@ -277,7 +350,7 @@ impl ModListView {
         // Scan mods folder
         let mods = ModList::scan_mods_folder(mods_folder);
 
-        // Populate the model with saved enabled state
+        // Populate the model with saved enabled state and order
         let model = self.model.borrow();
         if let Some(model) = model.as_ref() {
             model.remove_all();
@@ -293,6 +366,11 @@ impl ModListView {
                 let is_enabled = mod_state.is_enabled(&mod_folder_name);
                 if is_enabled {
                     mod_entry.set_enabled(true);
+                }
+
+                // Restore order from saved state if available
+                if let Some(saved_order) = mod_state.get_order(&mod_folder_name) {
+                    mod_entry.set_order(saved_order);
                 }
 
                 model.append(&mod_entry);
@@ -383,7 +461,10 @@ impl ModListView {
                             .to_string();
 
                         let enabled = mod_entry.enabled();
-                        mod_state.set_enabled(mod_folder_name, enabled);
+                        let order = mod_entry.order();
+
+                        mod_state.set_enabled(mod_folder_name.clone(), enabled);
+                        mod_state.set_order(mod_folder_name, order);
                     }
                 }
             }
@@ -398,5 +479,114 @@ impl ModListView {
     /// Save mod state
     pub fn save_mod_state(&self) {
         Self::save_mod_state_static(&self.model, &self.profile_name);
+    }
+
+    /// Find the position of a mod in the model
+    fn find_mod_position(model: &gio::ListStore, target: &ModEntry) -> u32 {
+        let target_path = target.path();
+        for i in 0..model.n_items() {
+            if let Some(item) = model.item(i) {
+                if let Ok(entry) = item.downcast::<ModEntry>() {
+                    if entry.path() == target_path {
+                        return i;
+                    }
+                }
+            }
+        }
+        0
+    }
+
+    /// Move a mod up in the list (static version for closures)
+    fn move_mod_up_static(
+        model: &RefCell<Option<gio::ListStore>>,
+        mod_entry: &ModEntry,
+        vfs: &RefCell<Option<VirtualFileSystem>>,
+        profile_name: &Rc<RefCell<Option<String>>>
+    ) {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
+            // Find position of this mod in model
+            let position = Self::find_mod_position(model_store, mod_entry);
+
+            if position == 0 {
+                return; // Already at top
+            }
+
+            // Get previous mod
+            let prev_mod = model_store.item(position - 1)
+                .and_downcast::<ModEntry>()
+                .expect("Previous item must be ModEntry");
+
+            // Swap order values
+            let temp_order = mod_entry.order();
+            mod_entry.set_order(prev_mod.order());
+            prev_mod.set_order(temp_order);
+
+            // Drop the borrow before calling static methods
+            let n_items = model_store.n_items();
+            drop(model_borrow);
+
+            // Rebuild VFS and save
+            Self::rebuild_vfs_static(model, vfs);
+            Self::save_mod_state_static(model, profile_name);
+
+            // Refresh UI
+            let model_borrow = model.borrow();
+            if let Some(model_store) = model_borrow.as_ref() {
+                model_store.items_changed(0, n_items, n_items);
+            }
+        }
+    }
+
+    /// Move a mod down in the list (static version for closures)
+    fn move_mod_down_static(
+        model: &RefCell<Option<gio::ListStore>>,
+        mod_entry: &ModEntry,
+        vfs: &RefCell<Option<VirtualFileSystem>>,
+        profile_name: &Rc<RefCell<Option<String>>>
+    ) {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
+            // Find position of this mod in model
+            let position = Self::find_mod_position(model_store, mod_entry);
+
+            if position >= model_store.n_items() - 1 {
+                return; // Already at bottom
+            }
+
+            // Get next mod
+            let next_mod = model_store.item(position + 1)
+                .and_downcast::<ModEntry>()
+                .expect("Next item must be ModEntry");
+
+            // Swap order values
+            let temp_order = mod_entry.order();
+            mod_entry.set_order(next_mod.order());
+            next_mod.set_order(temp_order);
+
+            // Drop the borrow before calling static methods
+            let n_items = model_store.n_items();
+            drop(model_borrow);
+
+            // Rebuild VFS and save
+            Self::rebuild_vfs_static(model, vfs);
+            Self::save_mod_state_static(model, profile_name);
+
+            // Refresh UI
+            let model_borrow = model.borrow();
+            if let Some(model_store) = model_borrow.as_ref() {
+                model_store.items_changed(0, n_items, n_items);
+            }
+        }
+    }
+
+    /// Public API: Move a mod up
+    pub fn move_mod_up(&self, mod_entry: &ModEntry) {
+        Self::move_mod_up_static(&self.model, mod_entry, &self.vfs, &self.profile_name);
+    }
+
+    /// Public API: Move a mod down
+    pub fn move_mod_down(&self, mod_entry: &ModEntry) {
+        Self::move_mod_down_static(&self.model, mod_entry, &self.vfs, &self.profile_name);
     }
 }

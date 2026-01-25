@@ -2,6 +2,7 @@ mod imp;
 
 use gtk4::subclass::prelude::*;
 use gtk4::{gio, glib, Box};
+use crate::mod_entry::ModEntry;
 
 glib::wrapper! {
     pub struct ModListView(ObjectSubclass<imp::ModListView>)
@@ -28,6 +29,16 @@ impl ModListView {
     /// Rebuilds VFS symlinks for all enabled mods in order
     pub fn rebuild_vfs(&self) {
         self.imp().rebuild_vfs();
+    }
+
+    /// Moves a mod up in the load order
+    pub fn move_mod_up(&self, mod_entry: &ModEntry) {
+        self.imp().move_mod_up(mod_entry);
+    }
+
+    /// Moves a mod down in the load order
+    pub fn move_mod_down(&self, mod_entry: &ModEntry) {
+        self.imp().move_mod_down(mod_entry);
     }
 }
 

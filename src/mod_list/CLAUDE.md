@@ -7,6 +7,8 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #1227 | 9:31 PM | 🔄 | Profile Name Changed to Rc-Wrapped RefCell for Shared Ownership | ~358 |
+| #1226 | 9:30 PM | 🔵 | Mod Load Order Implementation Analysis Complete | ~473 |
 | #1201 | 9:17 PM | ✅ | Removed Debug Logging from Mod Loading | ~228 |
 | #1197 | " | 🔄 | Removed Debug Print from Checkbox Toggle Handler | ~198 |
 | #1187 | 9:13 PM | ✅ | Added Debug Logging to Mod State Persistence | ~253 |

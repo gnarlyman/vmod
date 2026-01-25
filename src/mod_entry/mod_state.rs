@@ -1,18 +1,21 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 /// Stores the enabled state of mods for a profile
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ModState {
     /// Map of mod folder name -> enabled state
     pub enabled_mods: HashMap<String, bool>,
+    /// Map of mod folder name -> order value
+    #[serde(default)]
+    pub mod_order: HashMap<String, u32>,
 }
 
 impl ModState {
     pub fn new() -> Self {
         Self {
             enabled_mods: HashMap::new(),
+            mod_order: HashMap::new(),
         }
     }
 
@@ -59,6 +62,16 @@ impl ModState {
     /// Set enabled state for a mod
     pub fn set_enabled(&mut self, mod_name: String, enabled: bool) {
         self.enabled_mods.insert(mod_name, enabled);
+    }
+
+    /// Get order for a mod
+    pub fn get_order(&self, mod_name: &str) -> Option<u32> {
+        self.mod_order.get(mod_name).copied()
+    }
+
+    /// Set order for a mod
+    pub fn set_order(&mut self, mod_name: String, order: u32) {
+        self.mod_order.insert(mod_name, order);
     }
 }
 
