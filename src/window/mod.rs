@@ -228,7 +228,7 @@ impl VmodWindow {
 
     fn load_mods_for_active_profile(&self) {
         // Load the profile list
-        let profile_list = match crate::profile::profile_data::ProfileList::load() {
+        let mut profile_list = match crate::profile::profile_data::ProfileList::load() {
             Ok(list) => list,
             Err(e) => {
                 eprintln!("Failed to load profiles: {}", e);
@@ -236,14 +236,29 @@ impl VmodWindow {
             }
         };
 
-        // Get the active profile
-        let active_profile = match profile_list.get_active_profile() {
-            Some(p) => p,
+        // Get the active profile (mutable to allow initialization)
+        let mut active_profile = match profile_list.get_active_profile() {
+            Some(p) => p.clone(),
             None => {
                 eprintln!("No active profile selected");
                 return;
             }
         };
+
+        // Initialize mods_json_path if not set
+        if active_profile.mods_json_path.is_none() {
+            if let Err(e) = active_profile.initialize_mods_json() {
+                eprintln!("Failed to initialize Mods.json path: {}", e);
+                return;
+            }
+            // Save the updated profile
+            if let Some(active_idx) = profile_list.active_profile {
+                profile_list.profiles[active_idx] = active_profile.clone();
+                if let Err(e) = profile_list.save() {
+                    eprintln!("Failed to save profile with initialized Mods.json path: {}", e);
+                }
+            }
+        }
 
         // Get the mod list view
         let mod_list_ref = self.imp().mod_list_view.borrow();
@@ -281,10 +296,10 @@ impl VmodWindow {
         // Get the game mods folder from the profile
         let game_mods_folder = active_profile.get_mods_folder();
 
-        // Get the Mods.json path from the profile
+        // Get the Mods.json path from the profile (should be initialized by now)
         let mods_json_path = active_profile.mods_json_path
             .as_ref()
-            .expect("Mods.json path should be initialized");
+            .unwrap(); // Safe unwrap - we initialized it above
 
         // Load mods with profile name for state persistence
         mod_list_view.load_mods(&profile_mods_folder, &game_mods_folder, &active_profile.name, mods_json_path);
