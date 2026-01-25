@@ -96,10 +96,11 @@ impl ObjectImpl for ModListView {
         obj.append(&button_box);
 
         // Connect Apply button to rebuild VFS
-        let model_ref = self.model.clone();
-        let vfs_ref = self.vfs.clone();
+        // We need to call the public method on the widget, not use the captured refs
+        // because VFS isn't initialized yet in constructed()
+        let widget = obj.clone();
         apply_button.connect_clicked(move |_| {
-            Self::rebuild_vfs_static(&model_ref, &vfs_ref);
+            widget.imp().rebuild_vfs();
         });
 
         self.column_view.replace(Some(column_view));
