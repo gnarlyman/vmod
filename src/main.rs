@@ -1,6 +1,7 @@
 mod application;
 mod config;
 mod preferences;
+mod profile;
 mod window;
 
 use application::VmodApplication;
