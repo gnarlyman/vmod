@@ -5,6 +5,7 @@ use gtk4::subclass::prelude::*;
 use gtk4::{gio, glib, Application, Box, Button, DropDown, Label, Orientation, StringList, StringObject};
 
 use crate::profile::ProfileDialog;
+use crate::mod_list::ModListView;
 
 glib::wrapper! {
     pub struct VmodWindow(ObjectSubclass<imp::VmodWindow>)
@@ -96,8 +97,14 @@ impl VmodWindow {
         // Store the dropdown reference for later updates
         self.imp().profile_dropdown.replace(Some(profile_dropdown.clone()));
 
-        // Set up dropdown selection handler to save active profile
+        // Set up dropdown selection handler to save active profile and load mods
+        let window_weak = self.downgrade();
         profile_dropdown.connect_selected_item_notify(move |dropdown| {
+            let window = match window_weak.upgrade() {
+                Some(w) => w,
+                None => return,
+            };
+
             let selected_index = dropdown.selected();
 
             // Load profile list and update active profile
@@ -119,6 +126,9 @@ impl VmodWindow {
             if let Err(e) = profile_list.save() {
                 eprintln!("Failed to save active profile: {}", e);
             }
+
+            // Load mods for the selected profile
+            window.load_mods_for_active_profile();
         });
 
         // Create new profile button
@@ -153,12 +163,21 @@ impl VmodWindow {
                     } else {
                         // Reload profile UI
                         window_clone.refresh_profile_ui();
+                        window_clone.load_mods_for_active_profile();
                     }
                 }
             });
 
             dialog.present();
         });
+
+        // Create mod list view
+        let mod_list_view = ModListView::new();
+        self.imp().mod_list_view.replace(Some(mod_list_view.clone()));
+        content_box.append(&mod_list_view);
+
+        // Load mods for active profile if one exists
+        self.load_mods_for_active_profile();
     }
 
     fn refresh_profile_ui(&self) {
@@ -205,5 +224,64 @@ impl VmodWindow {
         if let Some(active) = profile_list.active_profile {
             dropdown.set_selected(active as u32);
         }
+    }
+
+    fn load_mods_for_active_profile(&self) {
+        // Load the profile list
+        let profile_list = match crate::profile::profile_data::ProfileList::load() {
+            Ok(list) => list,
+            Err(e) => {
+                eprintln!("Failed to load profiles: {}", e);
+                return;
+            }
+        };
+
+        // Get the active profile
+        let active_profile = match profile_list.get_active_profile() {
+            Some(p) => p,
+            None => {
+                eprintln!("No active profile selected");
+                return;
+            }
+        };
+
+        // Get the mod list view
+        let mod_list_ref = self.imp().mod_list_view.borrow();
+        let mod_list_view = match mod_list_ref.as_ref() {
+            Some(v) => v,
+            None => {
+                eprintln!("Mod list view not initialized");
+                return;
+            }
+        };
+
+        // Calculate paths
+        // For Phase 3, we'll use a profile-specific mods folder
+        // This will be in ~/.config/vmod/profiles/[profile_name]/mods/
+        let config_dir = match dirs::config_dir() {
+            Some(d) => d,
+            None => {
+                eprintln!("Could not find config directory");
+                return;
+            }
+        };
+
+        let profile_mods_folder = config_dir
+            .join("vmod")
+            .join("profiles")
+            .join(&active_profile.name)
+            .join("mods");
+
+        // Create the mods folder if it doesn't exist
+        if let Err(e) = std::fs::create_dir_all(&profile_mods_folder) {
+            eprintln!("Failed to create profile mods folder: {}", e);
+            return;
+        }
+
+        // Get the game mods folder from the profile
+        let game_mods_folder = active_profile.get_mods_folder();
+
+        // Load mods
+        mod_list_view.load_mods(&profile_mods_folder, &game_mods_folder);
     }
 }

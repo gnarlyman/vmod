@@ -3,6 +3,8 @@ use gtk4::subclass::prelude::*;
 use gtk4::{glib, gio, CompositeTemplate, PopoverMenuBar, Box, DropDown};
 use std::cell::RefCell;
 
+use crate::mod_list::ModListView;
+
 #[derive(Debug, Default, CompositeTemplate)]
 #[template(resource = "/org/vmod/VMOD/window.ui")]
 pub struct VmodWindow {
@@ -13,6 +15,7 @@ pub struct VmodWindow {
 
     pub settings: RefCell<Option<gio::Settings>>,
     pub profile_dropdown: RefCell<Option<DropDown>>,
+    pub mod_list_view: RefCell<Option<ModListView>>,
 }
 
 #[glib::object_subclass]
