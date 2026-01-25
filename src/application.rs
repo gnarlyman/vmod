@@ -30,6 +30,15 @@ impl VmodApplication {
         gio::resources_register_include!("vmod.gresource")
             .expect("Failed to register resources");
 
+        // Load CSS
+        let provider = gtk4::CssProvider::new();
+        provider.load_from_resource("/org/vmod/VMOD/style.css");
+        gtk4::style_context_add_provider_for_display(
+            &gtk4::gdk::Display::default().expect("Could not connect to a display"),
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+
         // For development: compile schema if not in system location
         // In production, the schema would be installed to /usr/share/glib-2.0/schemas/
         self.setup_schema_for_dev();

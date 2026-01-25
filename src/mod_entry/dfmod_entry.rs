@@ -20,6 +20,8 @@ mod imp {
         pub enabled: Cell<bool>,
         #[property(get, set)]
         pub load_priority: Cell<u32>,
+        #[property(get, set)]
+        pub highlighted: Cell<bool>,
     }
 
     #[glib::object_subclass]

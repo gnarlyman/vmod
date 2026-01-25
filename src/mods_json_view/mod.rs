@@ -23,6 +23,14 @@ impl ModsJsonView {
     pub fn save_mods_json(&self) -> Result<(), String> {
         self.imp().save_mods_json_static()
     }
+
+    pub fn highlight_entries(&self, file_names: &[String]) {
+        self.imp().highlight_entries(file_names);
+    }
+
+    pub fn clear_highlights(&self) {
+        self.imp().clear_highlights();
+    }
 }
 
 impl Default for ModsJsonView {

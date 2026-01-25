@@ -1,0 +1,7 @@
+row.highlighted {
+    background-color: #3584e4;
+}
+
+row.highlighted * {
+    color: white;
+}

@@ -241,6 +241,20 @@ impl ModsJsonView {
                 .bind_property("title", &label, "label")
                 .sync_create()
                 .build();
+
+            // Apply CSS to row widget when highlighted changes
+            let label_clone = label.clone();
+            dfmod_entry.connect_notify_local(Some("highlighted"), move |entry, _| {
+                let mut widget = label_clone.clone().upcast::<gtk4::Widget>();
+                while let Some(parent) = widget.parent() {
+                    if parent.css_name() == "row" {
+                        if entry.highlighted() { parent.add_css_class("highlighted"); }
+                        else { parent.remove_css_class("highlighted"); }
+                        break;
+                    }
+                    widget = parent;
+                }
+            });
         });
 
         let column = ColumnViewColumn::new(Some("Title"), Some(factory));
@@ -588,6 +602,26 @@ impl ModsJsonView {
                     if let Ok(dfmod_entry) = item.downcast::<DfmodEntry>() {
                         dfmod_entry.set_enabled(false);
                     }
+                }
+            }
+        }
+    }
+
+    pub fn highlight_entries(&self, file_names: &[String]) {
+        if let Some(model) = self.model.borrow().as_ref() {
+            for i in 0..model.n_items() {
+                if let Some(item) = model.item(i).and_then(|i| i.downcast::<DfmodEntry>().ok()) {
+                    item.set_highlighted(file_names.contains(&item.file_name()));
+                }
+            }
+        }
+    }
+
+    pub fn clear_highlights(&self) {
+        if let Some(model) = self.model.borrow().as_ref() {
+            for i in 0..model.n_items() {
+                if let Some(item) = model.item(i).and_then(|i| i.downcast::<DfmodEntry>().ok()) {
+                    item.set_highlighted(false);
                 }
             }
         }

@@ -217,6 +217,18 @@ impl ObjectImpl for ModListView {
         self.mods_json_view.replace(Some(mods_json_view.clone()));
         paned.set_end_child(Some(&mods_json_view));
 
+        // Highlight related dfmods when mod is selected
+        let mods_json_view_clone = mods_json_view.clone();
+        selection_model.connect_selected_item_notify(move |sel| {
+            if let Some(mod_entry) = sel.selected_item().and_then(|i| i.downcast::<ModEntry>().ok()) {
+                if let Ok(dfmods) = crate::mod_entry::parse_dfmod(&mod_entry.path()) {
+                    mods_json_view_clone.highlight_entries(&dfmods.iter().map(|d| d.file_name.clone()).collect::<Vec<_>>());
+                    return;
+                }
+            }
+            mods_json_view_clone.clear_highlights();
+        });
+
         // Load saved paned position
         let saved_position = settings.int("paned-position");
         paned.set_position(saved_position);
