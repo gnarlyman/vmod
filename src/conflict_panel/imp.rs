@@ -5,7 +5,9 @@ use gtk4::{
     ListView, SignalListItemFactory, SingleSelection, TreeExpander, TreeListModel,
 };
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use crate::mod_entry::{TreeItem, detect_conflicts, get_children_at_path};
 
@@ -15,7 +17,10 @@ pub struct ConflictPanel {
     pub files_list: RefCell<Option<ListView>>,
     pub conflicts_model: RefCell<Option<gio::ListStore>>,
     pub files_model: RefCell<Option<gio::ListStore>>,
-    pub current_mod_path: RefCell<Option<PathBuf>>,
+    // Wrapped in Rc so closure can share the reference
+    pub current_mod_path: Rc<RefCell<Option<PathBuf>>>,
+    // Store conflict data for the tree model callback
+    pub conflict_data: Rc<RefCell<HashMap<String, Vec<String>>>>,
 }
 
 impl Default for ConflictPanel {
@@ -26,7 +31,8 @@ impl Default for ConflictPanel {
             files_list: RefCell::new(None),
             conflicts_model: RefCell::new(None),
             files_model: RefCell::new(None),
-            current_mod_path: RefCell::new(None),
+            current_mod_path: Rc::new(RefCell::new(None)),
+            conflict_data: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 }
@@ -63,17 +69,29 @@ impl ObjectImpl for ConflictPanel {
         let conflicts_store = gio::ListStore::new::<TreeItem>();
         self.conflicts_model.replace(Some(conflicts_store.clone()));
 
+        // Clone the conflict_data reference for the closure
+        let conflict_data_ref = self.conflict_data.clone();
+
         let conflicts_tree_model = TreeListModel::new(
             conflicts_store.clone(),
             false, // passthrough
-            true,  // autoexpand
-            |item| {
+            false, // autoexpand - start collapsed so user can see structure
+            move |item| {
                 let tree_item = item.downcast_ref::<TreeItem>().unwrap();
                 if tree_item.is_expandable() {
-                    // Return child model for expandable items
-                    let children = gio::ListStore::new::<TreeItem>();
-                    // Children are populated when the model is updated
-                    Some(children.upcast())
+                    // Look up children from stored conflict data
+                    let mod_name = tree_item.display_name();
+                    let data = conflict_data_ref.borrow();
+                    if let Some(files) = data.get(&mod_name) {
+                        let children = gio::ListStore::new::<TreeItem>();
+                        for file_path in files {
+                            let file_item = TreeItem::new_file(file_path, file_path);
+                            children.append(&file_item);
+                        }
+                        Some(children.upcast())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -290,6 +308,18 @@ impl ConflictPanel {
     ) {
         let conflicts = detect_conflicts(mod_path, mod_name, enabled_mods);
 
+        // Store conflict data for the TreeListModel callback
+        {
+            let mut data = self.conflict_data.borrow_mut();
+            data.clear();
+            for conflict in &conflicts {
+                data.insert(
+                    conflict.other_mod_name.clone(),
+                    conflict.conflicting_files.clone(),
+                );
+            }
+        }
+
         if let Some(model) = self.conflicts_model.borrow().as_ref() {
             model.remove_all();
 
@@ -298,21 +328,14 @@ impl ConflictPanel {
                 let no_conflicts = TreeItem::new("No conflicts detected", "", false, 2);
                 model.append(&no_conflicts);
             } else {
-                // Add each conflicting mod as a root with its files as children
+                // Add only mod roots - children are provided by TreeListModel callback
                 for conflict in &conflicts {
-                    // Create flat list: mod name followed by indented files
                     let mod_item = TreeItem::new_mod_root(
                         &conflict.other_mod_name,
                         conflict.other_mod_path.to_str().unwrap_or(""),
                         conflict.conflicting_files.len() as u32,
                     );
                     model.append(&mod_item);
-
-                    // Add files directly (flat display with visual indentation)
-                    for file_path in &conflict.conflicting_files {
-                        let file_item = TreeItem::new(&format!("  {}", file_path), file_path, false, 2);
-                        model.append(&file_item);
-                    }
                 }
             }
         }
@@ -361,6 +384,7 @@ impl ConflictPanel {
     /// Clear the panel
     pub fn clear(&self) {
         self.current_mod_path.replace(None);
+        self.conflict_data.borrow_mut().clear();
 
         if let Some(model) = self.conflicts_model.borrow().as_ref() {
             model.remove_all();
