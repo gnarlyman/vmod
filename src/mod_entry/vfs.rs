@@ -114,17 +114,27 @@ impl VirtualFileSystem {
         Ok(())
     }
 
-    /// Removes all symlinks from StreamingAssets (except Mods folder structure)
+    /// Removes all symlinks from StreamingAssets
     pub fn clear_all_symlinks(&self) -> Result<(), String> {
         let streaming_assets = self.get_streaming_assets_folder();
 
-        // Common DFU folders that may contain symlinks
-        let folders = vec!["Mods", "Textures", "Sound", "Music", "QuestPacks", "Fonts", "Books", "Docs", "Text"];
+        // Read all entries in StreamingAssets and clear symlinks from each
+        let entries = match fs::read_dir(&streaming_assets) {
+            Ok(entries) => entries,
+            Err(e) => {
+                // If StreamingAssets doesn't exist yet, nothing to clear
+                eprintln!("StreamingAssets not found ({}), nothing to clear", e);
+                return Ok(());
+            }
+        };
 
-        for folder_name in folders {
-            let folder_path = streaming_assets.join(folder_name);
-            if folder_path.exists() {
-                self.remove_symlinks_recursive(&folder_path)?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+            let entry_path = entry.path();
+
+            // Only process directories
+            if entry_path.is_dir() {
+                self.remove_symlinks_recursive(&entry_path)?;
             }
         }
 
