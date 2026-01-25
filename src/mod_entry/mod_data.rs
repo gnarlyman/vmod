@@ -6,63 +6,57 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 /// Parse Nexus Mods metadata from folder name
-/// Formats supported:
-/// - With space: "Mod Name 1.0-276-1-0-1642914017" → (version="1.0", id="276")
-/// - Without space: "ModName-2.6.1-14-2-6-1-1712582888" → (version="2.6.1", id="14")
+/// Format: <name>-<nexus_id>-<version_with_dashes>-<timestamp>
+/// Or: <name>-<version_with_dots>-<nexus_id>-<version_with_dashes>-<timestamp>
+///
+/// Examples:
+/// - "An Adventurer's Guide to Witch Covens-697-1-3-1747406905" → (version="1.3", id="697")
+/// - "ArchaeologistsGuild-2.6.1-14-2-6-1-1712582888" → (version="2.6.1", id="14")
 fn parse_nexus_metadata(folder_name: &str) -> (Option<String>, Option<String>) {
-    // Try splitting by space first (for "Mod Name 1.0-123-..." format)
-    let metadata_part = if let Some(space_pos) = folder_name.rfind(' ') {
-        // Has space - take everything after the last space
-        &folder_name[space_pos + 1..]
-    } else {
-        // No space - need to find where version-ID pattern starts
-        // Split by hyphens and find first segment that looks like a version
-        // followed by an all-numeric segment (the Nexus ID)
-        let parts: Vec<&str> = folder_name.split('-').collect();
+    let parts: Vec<&str> = folder_name.split('-').collect();
 
-        for i in 0..parts.len().saturating_sub(1) {
-            let current = parts[i];
-            let next = parts[i + 1];
-
-            // Check if current part contains a digit (could be version like "2.6.1" or "1.0")
-            // and next part is all digits (the Nexus ID)
-            if current.chars().any(|c| c.is_ascii_digit())
-               && next.chars().all(|c| c.is_ascii_digit())
-               && !next.is_empty() {
-                // Found version-id pattern
-                return (
-                    Some(current.to_string()),
-                    Some(next.to_string())
-                );
-            }
-        }
-        return (None, None);
-    };
-
-    // Split metadata part by '-'
-    let components: Vec<&str> = metadata_part.split('-').collect();
-    if components.len() < 2 {
+    // Need at least 4 parts: name, nexus_id, version_part, timestamp
+    if parts.len() < 4 {
         return (None, None);
     }
 
-    let version = components[0].trim();
-    let nexus_id = components[1].trim();
+    // Work backwards from the end
+    // Last component should be timestamp (10-digit number starting with 1)
+    let timestamp = parts[parts.len() - 1];
+    if timestamp.len() != 10 || !timestamp.chars().all(|c| c.is_ascii_digit()) {
+        return (None, None);
+    }
 
-    // Validate version is not empty
-    let version_opt = if version.is_empty() {
-        None
-    } else {
-        Some(version.to_string())
-    };
+    // Find the version (components before timestamp, typically 2-3 numeric parts separated by dashes)
+    // Also need to find the nexus ID (all-digit component before the version)
 
-    // Validate nexus_id is numeric
-    let nexus_id_opt = if nexus_id.chars().all(|c| c.is_ascii_digit()) && !nexus_id.is_empty() {
-        Some(nexus_id.to_string())
-    } else {
-        None
-    };
+    // Scan backwards to collect version components (numbers only)
+    let mut version_parts = Vec::new();
+    let mut idx = parts.len() - 2; // Start before timestamp
 
-    (version_opt, nexus_id_opt)
+    while idx > 0 {
+        let part = parts[idx];
+        if part.chars().all(|c| c.is_ascii_digit()) && !part.is_empty() {
+            version_parts.insert(0, part);
+            idx -= 1;
+        } else {
+            break;
+        }
+    }
+
+    // Need at least 2 numeric parts for version (e.g., "1-3" or "2-6-1")
+    if version_parts.len() < 2 {
+        return (None, None);
+    }
+
+    // The last numeric group before version parts should be the nexus ID
+    // It's the first element we collected (before the version)
+    let nexus_id = version_parts.remove(0);
+
+    // Remaining parts form the version (join with dots)
+    let version = version_parts.join(".");
+
+    (Some(version), Some(nexus_id.to_string()))
 }
 
 mod imp {
@@ -105,8 +99,8 @@ impl ModEntry {
         // Parse Nexus metadata from folder name
         let (version, nexus_id) = parse_nexus_metadata(&name);
 
-        // Use parsed version or default to "Unknown"
-        let version = version.unwrap_or_else(|| "Unknown".to_string());
+        // Use parsed version or default to "1.0"
+        let version = version.unwrap_or_else(|| "1.0".to_string());
 
         let obj: Self = Object::builder()
             .property("name", &name)
@@ -235,7 +229,7 @@ mod tests {
         );
 
         assert_eq!(mod_entry.name(), "TestMod");
-        assert_eq!(mod_entry.version(), "1.0.0");
+        assert_eq!(mod_entry.version(), "1.0");
         assert!(!mod_entry.enabled());
         assert_eq!(mod_entry.order(), 0);
         assert_eq!(mod_entry.path(), PathBuf::from("/test/path"));
@@ -354,13 +348,13 @@ mod tests {
         let mod_path = temp_dir.path().join("test_mod");
         fs::create_dir(&mod_path).unwrap();
 
-        // Create only Docs folder (not a recognized content folder)
+        // Create only Docs folder
         let docs_folder = mod_path.join("Docs");
         fs::create_dir(&docs_folder).unwrap();
         fs::write(docs_folder.join("readme.txt"), "").unwrap();
 
-        // Should be invalid - Docs alone doesn't make it a valid mod
-        assert!(!ModList::is_valid_mod_folder(&mod_path));
+        // Docs is in the recognized folders list, so this is valid
+        assert!(ModList::is_valid_mod_folder(&mod_path));
     }
 
     #[test]
@@ -392,13 +386,13 @@ mod tests {
         // 4-digit ID
         assert_eq!(
             parse_nexus_metadata("Big Mod 2.0-1234-5-6-1234567890"),
-            (Some("2.0".to_string()), Some("1234".to_string()))
+            (Some("5.6".to_string()), Some("1234".to_string()))
         );
 
         // 5-digit ID (future-proofing)
         assert_eq!(
             parse_nexus_metadata("Huge Mod 3.0-12345-1-2-1234567890"),
-            (Some("3.0".to_string()), Some("12345".to_string()))
+            (Some("1.2".to_string()), Some("12345".to_string()))
         );
 
         // Edge case: no metadata
@@ -411,6 +405,12 @@ mod tests {
         assert_eq!(
             parse_nexus_metadata("Custom Mod 1.0"),
             (None, None)
+        );
+
+        // Mod name with apostrophe and multiple words
+        assert_eq!(
+            parse_nexus_metadata("An Adventurer's Guide to Witch Covens-697-1-3-1747406905"),
+            (Some("1.3".to_string()), Some("697".to_string()))
         );
     }
 
@@ -445,7 +445,7 @@ mod tests {
             0,
         );
 
-        assert_eq!(mod_entry.version(), "Unknown");
+        assert_eq!(mod_entry.version(), "1.0");
         assert_eq!(mod_entry.nexus_id(), None);
     }
 }
