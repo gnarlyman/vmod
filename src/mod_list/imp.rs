@@ -3,15 +3,16 @@ use gtk4::subclass::prelude::*;
 use gtk4::{
     glib, gio, Box, Button, ColumnView, ColumnViewColumn, Label, Orientation, ScrolledWindow,
     SignalListItemFactory, SingleSelection, CheckButton, SearchEntry, Paned, UriLauncher,
-    CustomFilter, FilterListModel, FilterChange, ProgressBar,
+    CustomFilter, FilterListModel, FilterChange, ProgressBar, Entry,
 };
+use std::collections::HashSet;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use crate::mod_entry::{ModEntry, ModList, ModState, VirtualFileSystem, load_mods_json, DfmodCacheKey, ModConflictSummary, detect_all_conflicts};
+use crate::mod_entry::{ModEntry, ModList, ModState, VirtualFileSystem, load_mods_json, DfmodCacheKey, ModConflictSummary, detect_all_conflicts, SectionHeader, SectionsConfig};
 use crate::mods_json_view::ModsJsonView;
 use crate::conflict_panel::ConflictPanel;
 
@@ -37,6 +38,10 @@ pub struct ModListView {
     pub conflict_results: Rc<RefCell<HashMap<PathBuf, ModConflictSummary>>>,
     pub dfmod_cache: Arc<Mutex<HashMap<DfmodCacheKey, Vec<String>>>>,
     pub is_scanning: Rc<RefCell<bool>>,
+    // Section management
+    pub sections_config: Rc<RefCell<SectionsConfig>>,
+    pub collapsed_sections: Rc<RefCell<HashSet<String>>>,
+    pub profile_path: Rc<RefCell<Option<PathBuf>>>,
 }
 
 impl Default for ModListView {
@@ -62,6 +67,9 @@ impl Default for ModListView {
             conflict_results: Rc::new(RefCell::new(HashMap::new())),
             dfmod_cache: Arc::new(Mutex::new(HashMap::new())),
             is_scanning: Rc::new(RefCell::new(false)),
+            sections_config: Rc::new(RefCell::new(SectionsConfig::default())),
+            collapsed_sections: Rc::new(RefCell::new(HashSet::new())),
+            profile_path: Rc::new(RefCell::new(None)),
         }
     }
 }
@@ -107,23 +115,42 @@ impl ObjectImpl for ModListView {
         left_box.append(&search_entry);
         self.search_entry.replace(Some(search_entry.clone()));
 
-        // Create the ListStore to hold ModEntry objects
-        let model = gio::ListStore::new::<ModEntry>();
+        // Create the ListStore to hold ModEntry and SectionHeader objects
+        let model = gio::ListStore::new::<glib::Object>();
         self.model.replace(Some(model.clone()));
 
-        // Create filter for searching by name
+        // Create filter for searching by name and handling collapsed sections
         let search_text: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
         let search_text_clone = search_text.clone();
+        let collapsed_sections = self.collapsed_sections.clone();
         let filter = CustomFilter::new(move |obj| {
-            let search = search_text_clone.borrow();
-            if search.is_empty() {
-                return true;
+            // Section headers are always visible
+            if let Some(section) = obj.downcast_ref::<SectionHeader>() {
+                let search = search_text_clone.borrow();
+                if search.is_empty() {
+                    return true;
+                }
+                // Show section if its name matches search
+                return section.name().to_lowercase().contains(&search.to_lowercase());
             }
+
+            // For mod entries
             if let Some(mod_entry) = obj.downcast_ref::<ModEntry>() {
-                mod_entry.name().to_lowercase().contains(&search.to_lowercase())
-            } else {
-                true
+                // Check if mod's section is collapsed
+                if let Some(section_id) = mod_entry.section_id() {
+                    if collapsed_sections.borrow().contains(&section_id) {
+                        return false; // Hide mods in collapsed sections
+                    }
+                }
+
+                let search = search_text_clone.borrow();
+                if search.is_empty() {
+                    return true;
+                }
+                return mod_entry.name().to_lowercase().contains(&search.to_lowercase());
             }
+
+            true
         });
         self.filter.replace(Some(filter.clone()));
 
@@ -192,6 +219,14 @@ impl ObjectImpl for ModListView {
         let scan_button = Button::with_label("Scan Conflicts");
         self.scan_button.replace(Some(scan_button.clone()));
 
+        // Third separator
+        let separator3 = gtk4::Separator::new(Orientation::Vertical);
+        separator3.set_margin_start(6);
+        separator3.set_margin_end(6);
+
+        let add_section_button = Button::with_label("+ Section");
+        add_section_button.set_tooltip_text(Some("Add a new collapsible section"));
+
         button_box.append(&top_button);
         button_box.append(&up_button);
         button_box.append(&down_button);
@@ -201,6 +236,8 @@ impl ObjectImpl for ModListView {
         button_box.append(&disable_all_button);
         button_box.append(&separator2);
         button_box.append(&scan_button);
+        button_box.append(&separator3);
+        button_box.append(&add_section_button);
 
         left_box.append(&button_box);
 
@@ -229,6 +266,8 @@ impl ObjectImpl for ModListView {
         let model_ref = self.model.clone();
         let vfs_ref = self.vfs.clone();
         let profile_name_ref = self.profile_name.clone();
+        let sections_config_ref = self.sections_config.clone();
+        let profile_path_ref = self.profile_path.clone();
 
         // Connect buttons to move selected mod
         let selection_model_clone = column_view.model().unwrap();
@@ -238,11 +277,12 @@ impl ObjectImpl for ModListView {
         let model_clone = model_ref.clone();
         let vfs_clone = vfs_ref.clone();
         let profile_clone = profile_name_ref.clone();
+        let sections_config_clone = sections_config_ref.clone();
+        let profile_path_clone = profile_path_ref.clone();
         top_button.connect_clicked(move |_| {
-            if let Some(item) = selection_clone.selected_item() {
-                if let Ok(mod_entry) = item.downcast::<ModEntry>() {
-                    Self::move_mod_to_top_static(&model_clone, &mod_entry, &vfs_clone, &profile_clone, &selection_clone);
-                }
+            let position = selection_clone.selected();
+            if position != gtk4::INVALID_LIST_POSITION {
+                Self::move_mod_to_top_static(&model_clone, position, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
             }
         });
 
@@ -250,11 +290,12 @@ impl ObjectImpl for ModListView {
         let model_clone = model_ref.clone();
         let vfs_clone = vfs_ref.clone();
         let profile_clone = profile_name_ref.clone();
+        let sections_config_clone = sections_config_ref.clone();
+        let profile_path_clone = profile_path_ref.clone();
         up_button.connect_clicked(move |_| {
-            if let Some(item) = selection_clone.selected_item() {
-                if let Ok(mod_entry) = item.downcast::<ModEntry>() {
-                    Self::move_mod_up_static(&model_clone, &mod_entry, &vfs_clone, &profile_clone, &selection_clone);
-                }
+            let position = selection_clone.selected();
+            if position != gtk4::INVALID_LIST_POSITION {
+                Self::move_mod_up_static(&model_clone, position, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
             }
         });
 
@@ -262,11 +303,12 @@ impl ObjectImpl for ModListView {
         let model_clone = model_ref.clone();
         let vfs_clone = vfs_ref.clone();
         let profile_clone = profile_name_ref.clone();
+        let sections_config_clone = sections_config_ref.clone();
+        let profile_path_clone = profile_path_ref.clone();
         down_button.connect_clicked(move |_| {
-            if let Some(item) = selection_clone.selected_item() {
-                if let Ok(mod_entry) = item.downcast::<ModEntry>() {
-                    Self::move_mod_down_static(&model_clone, &mod_entry, &vfs_clone, &profile_clone, &selection_clone);
-                }
+            let position = selection_clone.selected();
+            if position != gtk4::INVALID_LIST_POSITION {
+                Self::move_mod_down_static(&model_clone, position, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
             }
         });
 
@@ -274,11 +316,12 @@ impl ObjectImpl for ModListView {
         let model_clone = model_ref.clone();
         let vfs_clone = vfs_ref.clone();
         let profile_clone = profile_name_ref.clone();
+        let sections_config_clone = sections_config_ref.clone();
+        let profile_path_clone = profile_path_ref.clone();
         bottom_button.connect_clicked(move |_| {
-            if let Some(item) = selection_clone.selected_item() {
-                if let Ok(mod_entry) = item.downcast::<ModEntry>() {
-                    Self::move_mod_to_bottom_static(&model_clone, &mod_entry, &vfs_clone, &profile_clone, &selection_clone);
-                }
+            let position = selection_clone.selected();
+            if position != gtk4::INVALID_LIST_POSITION {
+                Self::move_mod_to_bottom_static(&model_clone, position, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
             }
         });
 
@@ -314,6 +357,22 @@ impl ObjectImpl for ModListView {
                 &progress_bar_clone,
                 &progress_label_clone,
                 &scan_button_clone,
+            );
+        });
+
+        // Connect add section button
+        let model_clone = model_ref.clone();
+        let selection_model_clone = selection_model.clone();
+        let sections_config_clone = self.sections_config.clone();
+        let profile_path_clone = self.profile_path.clone();
+        let filter_clone = self.filter.clone();
+        add_section_button.connect_clicked(move |_| {
+            Self::add_section_at_selection(
+                &model_clone,
+                &selection_model_clone,
+                &sections_config_clone,
+                &profile_path_clone,
+                &filter_clone,
             );
         });
 
@@ -397,50 +456,104 @@ impl ModListView {
     fn add_checkbox_column(&self, column_view: &ColumnView) {
         let factory = SignalListItemFactory::new();
 
-        // Setup: Create the CheckButton widget
+        // Setup: Create a Box that can hold either CheckButton or expander Button
         factory.connect_setup(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
-            let check_button = CheckButton::new();
-            list_item.set_child(Some(&check_button));
+            let container = Box::new(Orientation::Horizontal, 0);
+            list_item.set_child(Some(&container));
         });
 
         // Bind: Connect the CheckButton to the ModEntry's enabled property
         let model_ref = self.model.clone();
         let profile_name_ref = self.profile_name.clone();
+        let collapsed_sections = self.collapsed_sections.clone();
+        let filter_ref = self.filter.clone();
+        let sections_config_for_checkbox = self.sections_config.clone();
+        let profile_path_for_checkbox = self.profile_path.clone();
         factory.connect_bind(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
-            let mod_entry = list_item
-                .item()
-                .and_downcast::<ModEntry>()
-                .expect("Item must be ModEntry");
-
-            let check_button = list_item
+            let container = list_item
                 .child()
-                .and_downcast::<CheckButton>()
-                .expect("Child must be CheckButton");
+                .and_downcast::<Box>()
+                .expect("Child must be Box");
 
-            // Bind the enabled property and store the binding
-            let binding = mod_entry
-                .bind_property("enabled", &check_button, "active")
-                .bidirectional()
-                .sync_create()
-                .build();
+            // Clear any previous children
+            while let Some(child) = container.first_child() {
+                container.remove(&child);
+            }
 
-            // Connect to toggled signal to save state
-            let model_clone = model_ref.clone();
-            let profile_name_clone = profile_name_ref.clone();
-            let handler_id = check_button.connect_toggled(move |_btn| {
-                // Save mod state (VFS rebuild happens on Apply button)
-                Self::save_mod_state_static(&model_clone, &profile_name_clone);
-            });
+            // Check if this is a section header or mod entry
+            if let Some(section) = list_item.item().and_downcast::<SectionHeader>() {
+                // Create expand/collapse button for section
+                let is_expanded = !collapsed_sections.borrow().contains(&section.section_id());
+                let icon_name = if is_expanded { "pan-down-symbolic" } else { "pan-end-symbolic" };
+                let button = Button::from_icon_name(icon_name);
+                button.add_css_class("flat");
 
-            // Store binding and handler for cleanup in unbind
-            unsafe {
-                list_item.set_data("binding", binding);
-                list_item.set_data("handler-id", handler_id);
+                let collapsed_clone = collapsed_sections.clone();
+                let section_id = section.section_id();
+                let filter_clone = filter_ref.clone();
+                let sections_config_clone = sections_config_for_checkbox.clone();
+                let profile_path_clone = profile_path_for_checkbox.clone();
+                let handler_id = button.connect_clicked(move |btn| {
+                    let mut collapsed = collapsed_clone.borrow_mut();
+                    let is_expanding = collapsed.contains(&section_id);
+                    if is_expanding {
+                        collapsed.remove(&section_id);
+                        btn.set_icon_name("pan-down-symbolic");
+                    } else {
+                        collapsed.insert(section_id.clone());
+                        btn.set_icon_name("pan-end-symbolic");
+                    }
+                    drop(collapsed);
+
+                    // Persist expanded state
+                    sections_config_clone.borrow_mut().update_section_expanded(&section_id, is_expanding);
+                    if let Some(path) = profile_path_clone.borrow().as_ref() {
+                        let _ = sections_config_clone.borrow().save(path);
+                    }
+
+                    // Trigger filter update
+                    if let Some(filter) = filter_clone.borrow().as_ref() {
+                        filter.changed(FilterChange::Different);
+                    }
+                });
+
+                container.append(&button);
+
+                unsafe {
+                    list_item.set_data("is-section", true);
+                    list_item.set_data("section-handler-id", handler_id);
+                }
+            } else if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
+                // Create checkbox for mod entry
+                let check_button = CheckButton::new();
+
+                // Bind the enabled property and store the binding
+                let binding = mod_entry
+                    .bind_property("enabled", &check_button, "active")
+                    .bidirectional()
+                    .sync_create()
+                    .build();
+
+                // Connect to toggled signal to save state
+                let model_clone = model_ref.clone();
+                let profile_name_clone = profile_name_ref.clone();
+                let handler_id = check_button.connect_toggled(move |_btn| {
+                    // Save mod state (VFS rebuild happens on Apply button)
+                    Self::save_mod_state_static(&model_clone, &profile_name_clone);
+                });
+
+                container.append(&check_button);
+
+                unsafe {
+                    list_item.set_data("is-section", false);
+                    list_item.set_data("binding", binding);
+                    list_item.set_data("handler-id", handler_id);
+                }
             }
         });
 
@@ -449,18 +562,37 @@ impl ModListView {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
-            // Unbind the property binding
-            unsafe {
-                if let Some(binding) = list_item.steal_data::<glib::Binding>("binding") {
-                    binding.unbind();
-                }
-            }
+            let is_section: bool = unsafe {
+                list_item.steal_data::<bool>("is-section").unwrap_or(false)
+            };
 
-            // Disconnect the signal handler
-            if let Some(check_button) = list_item.child().and_downcast::<CheckButton>() {
+            if is_section {
+                // Clean up section button handler
+                if let Some(container) = list_item.child().and_downcast::<Box>() {
+                    if let Some(button) = container.first_child().and_downcast::<Button>() {
+                        unsafe {
+                            if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("section-handler-id") {
+                                button.disconnect(handler_id);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Unbind the property binding
                 unsafe {
-                    if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("handler-id") {
-                        check_button.disconnect(handler_id);
+                    if let Some(binding) = list_item.steal_data::<glib::Binding>("binding") {
+                        binding.unbind();
+                    }
+                }
+
+                // Disconnect the checkbox handler
+                if let Some(container) = list_item.child().and_downcast::<Box>() {
+                    if let Some(check_button) = container.first_child().and_downcast::<CheckButton>() {
+                        unsafe {
+                            if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("handler-id") {
+                                check_button.disconnect(handler_id);
+                            }
+                        }
                     }
                 }
             }
@@ -486,23 +618,45 @@ impl ModListView {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
-            let mod_entry = list_item
-                .item()
-                .and_downcast::<ModEntry>()
-                .expect("Item must be ModEntry");
-
             let label = list_item
                 .child()
                 .and_downcast::<Label>()
                 .expect("Child must be Label");
 
-            let binding = mod_entry
-                .bind_property("name", &label, "label")
-                .sync_create()
-                .build();
+            // Check if this is a section header or mod entry
+            if let Some(section) = list_item.item().and_downcast::<SectionHeader>() {
+                // Section header: show name with bold styling
+                label.add_css_class("heading");
+                label.set_markup(&format!("<b>{}</b>", glib::markup_escape_text(&section.name())));
 
-            unsafe {
-                list_item.set_data("name-binding", binding);
+                let binding = section
+                    .bind_property("name", &label, "label")
+                    .transform_to(|_, name: String| {
+                        Some(format!("<b>{}</b>", glib::markup_escape_text(&name)))
+                    })
+                    .sync_create()
+                    .build();
+
+                label.set_use_markup(true);
+
+                unsafe {
+                    list_item.set_data("name-binding", binding);
+                    list_item.set_data("is-section-name", true);
+                }
+            } else if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
+                // Regular mod entry
+                label.remove_css_class("heading");
+                label.set_use_markup(false);
+
+                let binding = mod_entry
+                    .bind_property("name", &label, "label")
+                    .sync_create()
+                    .build();
+
+                unsafe {
+                    list_item.set_data("name-binding", binding);
+                    list_item.set_data("is-section-name", false);
+                }
             }
         });
 
@@ -510,10 +664,17 @@ impl ModListView {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
+            // Clean up CSS class if it was a section
+            if let Some(label) = list_item.child().and_downcast::<Label>() {
+                label.remove_css_class("heading");
+                label.set_use_markup(false);
+            }
+
             unsafe {
                 if let Some(binding) = list_item.steal_data::<glib::Binding>("name-binding") {
                     binding.unbind();
                 }
+                let _ = list_item.steal_data::<bool>("is-section-name");
             }
         });
 
@@ -537,23 +698,27 @@ impl ModListView {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
-            let mod_entry = list_item
-                .item()
-                .and_downcast::<ModEntry>()
-                .expect("Item must be ModEntry");
-
             let label = list_item
                 .child()
                 .and_downcast::<Label>()
                 .expect("Child must be Label");
 
-            let binding = mod_entry
-                .bind_property("version", &label, "label")
-                .sync_create()
-                .build();
+            // Section headers show nothing in version column
+            if list_item.item().and_downcast::<SectionHeader>().is_some() {
+                label.set_text("");
+                unsafe {
+                    list_item.set_data("is-section-version", true);
+                }
+            } else if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
+                let binding = mod_entry
+                    .bind_property("version", &label, "label")
+                    .sync_create()
+                    .build();
 
-            unsafe {
-                list_item.set_data("version-binding", binding);
+                unsafe {
+                    list_item.set_data("version-binding", binding);
+                    list_item.set_data("is-section-version", false);
+                }
             }
         });
 
@@ -565,6 +730,7 @@ impl ModListView {
                 if let Some(binding) = list_item.steal_data::<glib::Binding>("version-binding") {
                     binding.unbind();
                 }
+                let _ = list_item.steal_data::<bool>("is-section-version");
             }
         });
 
@@ -588,31 +754,35 @@ impl ModListView {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
-            let mod_entry = list_item
-                .item()
-                .and_downcast::<ModEntry>()
-                .expect("Item must be ModEntry");
-
             let label = list_item
                 .child()
                 .and_downcast::<Label>()
                 .expect("Child must be Label");
 
-            // Set initial value
-            label.set_text(&mod_entry.order().to_string());
+            // Section headers show nothing in order column
+            if list_item.item().and_downcast::<SectionHeader>().is_some() {
+                label.set_text("");
+                unsafe {
+                    list_item.set_data("is-section-order", true);
+                }
+            } else if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
+                // Set initial value
+                label.set_text(&mod_entry.order().to_string());
 
-            // Update when order property changes
-            let label_clone = label.clone();
-            let handler_id = mod_entry.connect_notify_local(
-                Some("order"),
-                move |entry, _| {
-                    label_clone.set_text(&entry.order().to_string());
-                },
-            );
+                // Update when order property changes
+                let label_clone = label.clone();
+                let handler_id = mod_entry.connect_notify_local(
+                    Some("order"),
+                    move |entry, _| {
+                        label_clone.set_text(&entry.order().to_string());
+                    },
+                );
 
-            // Store handler for cleanup
-            unsafe {
-                list_item.set_data("order-handler-id", handler_id);
+                // Store handler for cleanup
+                unsafe {
+                    list_item.set_data("order-handler-id", handler_id);
+                    list_item.set_data("is-section-order", false);
+                }
             }
         });
 
@@ -620,10 +790,13 @@ impl ModListView {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
-            if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
-                unsafe {
-                    if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("order-handler-id") {
-                        mod_entry.disconnect(handler_id);
+            unsafe {
+                let is_section = list_item.steal_data::<bool>("is-section-order").unwrap_or(false);
+                if !is_section {
+                    if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
+                        if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("order-handler-id") {
+                            mod_entry.disconnect(handler_id);
+                        }
                     }
                 }
             }
@@ -649,45 +822,50 @@ impl ModListView {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
-            let mod_entry = list_item
-                .item()
-                .and_downcast::<ModEntry>()
-                .expect("Item must be ModEntry");
-
             let label = list_item
                 .child()
                 .and_downcast::<Label>()
                 .expect("Child must be Label");
 
-            // Initial value
-            let count = mod_entry.conflict_count();
-            if count > 0 {
-                label.set_text(&count.to_string());
-                label.add_css_class("warning");
-            } else {
-                label.set_text("-");
+            // Section headers show nothing in conflicts column
+            if list_item.item().and_downcast::<SectionHeader>().is_some() {
+                label.set_text("");
                 label.remove_css_class("warning");
-            }
+                unsafe {
+                    list_item.set_data("is-section-conflict", true);
+                }
+            } else if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
+                // Initial value
+                let count = mod_entry.conflict_count();
+                if count > 0 {
+                    label.set_text(&count.to_string());
+                    label.add_css_class("warning");
+                } else {
+                    label.set_text("-");
+                    label.remove_css_class("warning");
+                }
 
-            // Update when conflict_count property changes
-            let label_clone = label.clone();
-            let handler_id = mod_entry.connect_notify_local(
-                Some("conflict-count"),
-                move |entry, _| {
-                    let count = entry.conflict_count();
-                    if count > 0 {
-                        label_clone.set_text(&count.to_string());
-                        label_clone.add_css_class("warning");
-                    } else {
-                        label_clone.set_text("-");
-                        label_clone.remove_css_class("warning");
-                    }
-                },
-            );
+                // Update when conflict_count property changes
+                let label_clone = label.clone();
+                let handler_id = mod_entry.connect_notify_local(
+                    Some("conflict-count"),
+                    move |entry, _| {
+                        let count = entry.conflict_count();
+                        if count > 0 {
+                            label_clone.set_text(&count.to_string());
+                            label_clone.add_css_class("warning");
+                        } else {
+                            label_clone.set_text("-");
+                            label_clone.remove_css_class("warning");
+                        }
+                    },
+                );
 
-            // Store handler for cleanup
-            unsafe {
-                list_item.set_data("conflict-handler-id", handler_id);
+                // Store handler for cleanup
+                unsafe {
+                    list_item.set_data("conflict-handler-id", handler_id);
+                    list_item.set_data("is-section-conflict", false);
+                }
             }
         });
 
@@ -695,12 +873,20 @@ impl ModListView {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
-            if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
-                unsafe {
-                    if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("conflict-handler-id") {
-                        mod_entry.disconnect(handler_id);
+            unsafe {
+                let is_section = list_item.steal_data::<bool>("is-section-conflict").unwrap_or(false);
+                if !is_section {
+                    if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
+                        if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("conflict-handler-id") {
+                            mod_entry.disconnect(handler_id);
+                        }
                     }
                 }
+            }
+
+            // Clear warning class
+            if let Some(label) = list_item.child().and_downcast::<Label>() {
+                label.remove_css_class("warning");
             }
         });
 
@@ -711,94 +897,178 @@ impl ModListView {
 
     fn add_nexus_column(&self, column_view: &ColumnView) {
         let factory = SignalListItemFactory::new();
+        let model_ref = self.model.clone();
+        let sections_config_ref = self.sections_config.clone();
+        let profile_path_ref = self.profile_path.clone();
 
-        // Setup phase: Create box with two icon buttons
+        // Setup phase: Create box with buttons (content changes based on row type)
         factory.connect_setup(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
             let button_box = Box::new(Orientation::Horizontal, 4);
             button_box.set_margin_end(16);
-
-            // Nexus button with external link icon
-            let nexus_button = Button::from_icon_name("go-jump-symbolic");
-            nexus_button.add_css_class("flat");
-
-            // Folder button with folder icon
-            let folder_button = Button::from_icon_name("folder-open-symbolic");
-            folder_button.add_css_class("flat");
-
-            button_box.append(&nexus_button);
-            button_box.append(&folder_button);
             list_item.set_child(Some(&button_box));
         });
 
         // Bind phase: Connect button clicks
+        let model_clone = model_ref.clone();
+        let sections_config_clone = sections_config_ref.clone();
+        let profile_path_clone = profile_path_ref.clone();
         factory.connect_bind(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
-
-            let mod_entry = list_item
-                .item()
-                .and_downcast::<ModEntry>()
-                .expect("Item must be ModEntry");
 
             let button_box = list_item
                 .child()
                 .and_downcast::<Box>()
                 .expect("Child must be Box");
 
-            // Get the buttons from the box
-            let nexus_button = button_box
-                .first_child()
-                .and_downcast::<Button>()
-                .expect("First child must be Button");
-
-            let folder_button = nexus_button
-                .next_sibling()
-                .and_downcast::<Button>()
-                .expect("Second child must be Button");
-
-            // Get nexus_id and configure nexus button state
-            let nexus_id = mod_entry.nexus_id();
-
-            if let Some(id) = nexus_id {
-                nexus_button.set_sensitive(true);
-                nexus_button.set_tooltip_text(Some(&format!("Open mod {} on Nexus Mods", id)));
-
-                // Connect click handler to open Nexus URL
-                let id_clone = id.clone();
-                let handler_id = nexus_button.connect_clicked(move |btn| {
-                    let url = format!("https://www.nexusmods.com/daggerfallunity/mods/{}", id_clone);
-
-                    let root = btn.root();
-                    if let Some(window) = root.and_downcast::<gtk4::Window>() {
-                        let launcher = UriLauncher::new(&url);
-                        launcher.launch(Some(&window), gio::Cancellable::NONE, |result| {
-                            if let Err(e) = result {
-                                eprintln!("Failed to open URL: {}", e);
-                            }
-                        });
-                    }
-                });
-                unsafe { nexus_button.set_data("handler-id", handler_id); }
-            } else {
-                nexus_button.set_sensitive(false);
-                nexus_button.set_tooltip_text(Some("This mod is not from Nexus Mods"));
+            // Clear any previous buttons
+            while let Some(child) = button_box.first_child() {
+                button_box.remove(&child);
             }
 
-            // Configure folder button - always enabled
-            let mod_path = mod_entry.path();
-            folder_button.set_sensitive(true);
-            folder_button.set_tooltip_text(Some(&format!("Open folder: {}", mod_path.display())));
+            // Check if this is a section header
+            if let Some(section) = list_item.item().and_downcast::<SectionHeader>() {
+                // For sections: show rename and delete buttons
+                let rename_button = Button::from_icon_name("document-edit-symbolic");
+                rename_button.add_css_class("flat");
+                rename_button.set_tooltip_text(Some("Rename section"));
 
-            let folder_handler_id = folder_button.connect_clicked(move |_btn| {
-                // Use the `open` crate for cross-platform folder opening
-                if let Err(e) = open::that(&mod_path) {
-                    eprintln!("Failed to open folder: {}", e);
+                let delete_button = Button::from_icon_name("user-trash-symbolic");
+                delete_button.add_css_class("flat");
+                delete_button.set_tooltip_text(Some("Delete section"));
+
+                // Rename handler
+                let section_id = section.section_id();
+                let section_clone = section.clone();
+                let sections_config_for_rename = sections_config_clone.clone();
+                let profile_path_for_rename = profile_path_clone.clone();
+                let section_id_for_rename = section_id.clone();
+                let rename_handler = rename_button.connect_clicked(move |btn| {
+                    // Create a simple rename dialog using popover
+                    let popover = gtk4::Popover::new();
+                    let entry = Entry::new();
+                    entry.set_text(&section_clone.name());
+                    entry.set_width_chars(20);
+
+                    let section_for_activate = section_clone.clone();
+                    let section_id_for_save = section_id_for_rename.clone();
+                    let config_for_save = sections_config_for_rename.clone();
+                    let path_for_save = profile_path_for_rename.clone();
+                    entry.connect_activate(glib::clone!(
+                        #[weak] popover,
+                        move |e| {
+                            let new_name = e.text().to_string();
+                            section_for_activate.set_name(new_name.clone());
+
+                            // Persist the rename
+                            config_for_save.borrow_mut().rename_section(&section_id_for_save, &new_name);
+                            if let Some(path) = path_for_save.borrow().as_ref() {
+                                let _ = config_for_save.borrow().save(path);
+                            }
+
+                            popover.popdown();
+                        }
+                    ));
+
+                    popover.set_child(Some(&entry));
+                    popover.set_parent(btn);
+                    popover.popup();
+                });
+
+                // Delete handler
+                let model_for_delete = model_clone.clone();
+                let section_id_for_delete = section_id;
+                let sections_config_for_delete = sections_config_clone.clone();
+                let profile_path_for_delete = profile_path_clone.clone();
+                let delete_handler = delete_button.connect_clicked(move |_btn| {
+                    // Remove section from model
+                    if let Some(model) = model_for_delete.borrow().as_ref() {
+                        // Find and remove the section
+                        for i in 0..model.n_items() {
+                            if let Some(item) = model.item(i) {
+                                if let Some(sec) = item.downcast_ref::<SectionHeader>() {
+                                    if sec.section_id() == section_id_for_delete {
+                                        model.remove(i);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Update config
+                    sections_config_for_delete.borrow_mut().remove_section(&section_id_for_delete);
+                    if let Some(path) = profile_path_for_delete.borrow().as_ref() {
+                        let _ = sections_config_for_delete.borrow().save(path);
+                    }
+                });
+
+                button_box.append(&rename_button);
+                button_box.append(&delete_button);
+
+                unsafe {
+                    list_item.set_data("is-section-nexus", true);
+                    list_item.set_data("rename-handler-id", rename_handler);
+                    list_item.set_data("delete-handler-id", delete_handler);
                 }
-            });
-            unsafe { folder_button.set_data("folder-handler-id", folder_handler_id); }
+            } else if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
+                // For mods: show nexus and folder buttons
+                let nexus_button = Button::from_icon_name("go-jump-symbolic");
+                nexus_button.add_css_class("flat");
+
+                let folder_button = Button::from_icon_name("folder-open-symbolic");
+                folder_button.add_css_class("flat");
+
+                // Get nexus_id and configure nexus button state
+                let nexus_id = mod_entry.nexus_id();
+
+                if let Some(id) = nexus_id {
+                    nexus_button.set_sensitive(true);
+                    nexus_button.set_tooltip_text(Some(&format!("Open mod {} on Nexus Mods", id)));
+
+                    // Connect click handler to open Nexus URL
+                    let id_clone = id.clone();
+                    let handler_id = nexus_button.connect_clicked(move |btn| {
+                        let url = format!("https://www.nexusmods.com/daggerfallunity/mods/{}", id_clone);
+
+                        let root = btn.root();
+                        if let Some(window) = root.and_downcast::<gtk4::Window>() {
+                            let launcher = UriLauncher::new(&url);
+                            launcher.launch(Some(&window), gio::Cancellable::NONE, |result| {
+                                if let Err(e) = result {
+                                    eprintln!("Failed to open URL: {}", e);
+                                }
+                            });
+                        }
+                    });
+                    unsafe { list_item.set_data("nexus-handler-id", handler_id); }
+                } else {
+                    nexus_button.set_sensitive(false);
+                    nexus_button.set_tooltip_text(Some("This mod is not from Nexus Mods"));
+                }
+
+                // Configure folder button - always enabled
+                let mod_path = mod_entry.path();
+                folder_button.set_sensitive(true);
+                folder_button.set_tooltip_text(Some(&format!("Open folder: {}", mod_path.display())));
+
+                let folder_handler_id = folder_button.connect_clicked(move |_btn| {
+                    if let Err(e) = open::that(&mod_path) {
+                        eprintln!("Failed to open folder: {}", e);
+                    }
+                });
+
+                button_box.append(&nexus_button);
+                button_box.append(&folder_button);
+
+                unsafe {
+                    list_item.set_data("is-section-nexus", false);
+                    list_item.set_data("folder-handler-id", folder_handler_id);
+                }
+            }
         });
 
         // Unbind phase: Disconnect signal handlers
@@ -806,37 +1076,51 @@ impl ModListView {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
+            let is_section: bool = unsafe {
+                list_item.steal_data::<bool>("is-section-nexus").unwrap_or(false)
+            };
+
             let button_box = list_item
                 .child()
                 .and_downcast::<Box>()
                 .expect("Child must be Box");
 
-            let nexus_button = button_box
-                .first_child()
-                .and_downcast::<Button>()
-                .expect("First child must be Button");
-
-            let folder_button = nexus_button
-                .next_sibling()
-                .and_downcast::<Button>()
-                .expect("Second child must be Button");
-
-            // Disconnect nexus button handler if exists
-            unsafe {
-                if let Some(handler_id) = nexus_button.steal_data::<glib::SignalHandlerId>("handler-id") {
-                    nexus_button.disconnect(handler_id);
+            if is_section {
+                // Clean up section button handlers
+                if let Some(rename_btn) = button_box.first_child().and_downcast::<Button>() {
+                    unsafe {
+                        if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("rename-handler-id") {
+                            rename_btn.disconnect(handler_id);
+                        }
+                    }
+                    if let Some(delete_btn) = rename_btn.next_sibling().and_downcast::<Button>() {
+                        unsafe {
+                            if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("delete-handler-id") {
+                                delete_btn.disconnect(handler_id);
+                            }
+                        }
+                    }
                 }
-            }
-
-            // Disconnect folder button handler
-            unsafe {
-                if let Some(handler_id) = folder_button.steal_data::<glib::SignalHandlerId>("folder-handler-id") {
-                    folder_button.disconnect(handler_id);
+            } else {
+                // Clean up mod button handlers
+                if let Some(nexus_btn) = button_box.first_child().and_downcast::<Button>() {
+                    unsafe {
+                        if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("nexus-handler-id") {
+                            nexus_btn.disconnect(handler_id);
+                        }
+                    }
+                    if let Some(folder_btn) = nexus_btn.next_sibling().and_downcast::<Button>() {
+                        unsafe {
+                            if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("folder-handler-id") {
+                                folder_btn.disconnect(handler_id);
+                            }
+                        }
+                    }
                 }
             }
         });
 
-        let column = ColumnViewColumn::new(Some("Nexus"), Some(factory));
+        let column = ColumnViewColumn::new(Some("Actions"), Some(factory));
         column.set_fixed_width(100);
         column_view.append_column(&column);
     }
@@ -848,6 +1132,9 @@ impl ModListView {
         // Store mods_json_path
         self.mods_json_path.replace(Some(mods_json_path.to_path_buf()));
 
+        // Store profile path for sections config
+        self.profile_path.replace(Some(mods_folder.to_path_buf()));
+
         // Create VFS manager
         let vfs = VirtualFileSystem::new(game_mods_folder.to_path_buf());
         self.vfs.replace(Some(vfs));
@@ -858,10 +1145,14 @@ impl ModListView {
             Err(_) => ModState::default(),
         };
 
+        // Load sections config
+        let sections_config = SectionsConfig::load(mods_folder);
+        self.sections_config.replace(sections_config.clone());
+
         // Scan mods folder
         let mut mods = ModList::scan_mods_folder(mods_folder);
 
-        // Restore enabled state and order for all mods
+        // Restore enabled state, order, and section_id for all mods
         for mod_entry in &mods {
             // Get mod folder name for state lookup
             let mod_folder_name = mod_entry.path()
@@ -880,18 +1171,59 @@ impl ModListView {
             if let Some(saved_order) = mod_state.get_order(&mod_folder_name) {
                 mod_entry.set_order(saved_order);
             }
+
+            // Restore section assignment
+            if let Some(section_id) = sections_config.get_section_for_mod(&mod_folder_name) {
+                mod_entry.set_section_id(section_id);
+            }
         }
 
         // Sort mods by order before adding to model
         mods.sort_by_key(|m| m.order());
 
-        // Populate the model with sorted mods
+        // Create section headers from config
+        let sections: Vec<SectionHeader> = sections_config.sections.iter()
+            .map(|data| SectionHeader::from_data(data))
+            .collect();
+
+        // Populate collapsed_sections from config
+        {
+            let mut collapsed = self.collapsed_sections.borrow_mut();
+            collapsed.clear();
+            for section_data in &sections_config.sections {
+                if !section_data.expanded {
+                    collapsed.insert(section_data.section_id.clone());
+                }
+            }
+        }
+
+        // Build a combined list with sections and mods interleaved by order
+        // Create sortable items (order, is_section_priority, object)
+        // Sections come before mods at the same order position
         let model = self.model.borrow();
         if let Some(model) = model.as_ref() {
             model.remove_all();
-            for mod_entry in mods {
-                model.append(&mod_entry);
+
+            // Create a combined vec of (order, priority, object) where priority 0=section, 1=mod
+            let mut items: Vec<(u32, u8, glib::Object)> = Vec::new();
+
+            for section in sections {
+                items.push((section.order(), 0, section.upcast()));
             }
+            for mod_entry in mods {
+                items.push((mod_entry.order(), 1, mod_entry.upcast()));
+            }
+
+            // Sort by order, then by priority (sections first at same position)
+            items.sort_by_key(|(order, priority, _)| (*order, *priority));
+
+            // Add to model
+            for (_, _, obj) in items {
+                model.append(&obj);
+            }
+
+            // Assign mods to sections based on position
+            Self::update_section_assignments(model);
         }
 
         // Load Mods.json into ModsJsonView
@@ -1019,59 +1351,139 @@ impl ModListView {
     }
 
     /// Move a mod up in the list (static version for closures)
+    /// Helper to get order value from any item (ModEntry or SectionHeader)
+    fn get_item_order(item: &glib::Object) -> Option<u32> {
+        if let Some(mod_entry) = item.downcast_ref::<ModEntry>() {
+            Some(mod_entry.order())
+        } else if let Some(section) = item.downcast_ref::<SectionHeader>() {
+            Some(section.order())
+        } else {
+            None
+        }
+    }
+
+    /// Helper to set order value on any item (ModEntry or SectionHeader)
+    fn set_item_order(item: &glib::Object, order: u32) {
+        if let Some(mod_entry) = item.downcast_ref::<ModEntry>() {
+            mod_entry.set_order(order);
+        } else if let Some(section) = item.downcast_ref::<SectionHeader>() {
+            section.set_order(order);
+        }
+    }
+
+    /// Rebuild model sorted by order (handles both ModEntry and SectionHeader)
+    fn rebuild_model_sorted(model_store: &gio::ListStore) {
+        let n_items = model_store.n_items();
+        let mut items: Vec<(u32, u8, glib::Object)> = Vec::new();
+
+        for i in 0..n_items {
+            if let Some(item) = model_store.item(i) {
+                if let Some(mod_entry) = item.downcast_ref::<ModEntry>() {
+                    items.push((mod_entry.order(), 1, item)); // priority 1 for mods
+                } else if let Some(section) = item.downcast_ref::<SectionHeader>() {
+                    items.push((section.order(), 0, item)); // priority 0 for sections
+                }
+            }
+        }
+
+        // Sort by order, then by priority (sections first at same position)
+        items.sort_by_key(|(order, priority, _)| (*order, *priority));
+
+        model_store.remove_all();
+        for (_, _, obj) in items {
+            model_store.append(&obj);
+        }
+
+        // Update section assignments based on position
+        Self::update_section_assignments(model_store);
+    }
+
+    /// Scan the list and assign each mod to the section header above it
+    fn update_section_assignments(model_store: &gio::ListStore) {
+        let n_items = model_store.n_items();
+        let mut current_section_id: Option<String> = None;
+
+        for i in 0..n_items {
+            if let Some(item) = model_store.item(i) {
+                if let Some(section) = item.downcast_ref::<SectionHeader>() {
+                    // Update current section
+                    current_section_id = Some(section.section_id());
+                } else if let Some(mod_entry) = item.downcast_ref::<ModEntry>() {
+                    // Assign mod to current section (or None if before any section)
+                    // Use the property system directly for Option<String>
+                    mod_entry.set_property("section-id", &current_section_id);
+                }
+            }
+        }
+    }
+
+    /// Sync section data from model to config and save to disk
+    fn sync_sections_to_config(
+        model_store: &gio::ListStore,
+        sections_config: &Rc<RefCell<SectionsConfig>>,
+        profile_path: &Rc<RefCell<Option<PathBuf>>>,
+    ) {
+        let mut config = sections_config.borrow_mut();
+
+        // Update all sections in config with current data from model
+        for i in 0..model_store.n_items() {
+            if let Some(item) = model_store.item(i) {
+                if let Some(section) = item.downcast_ref::<SectionHeader>() {
+                    // Update or add section in config
+                    config.add_section(section.to_data());
+                }
+            }
+        }
+
+        // Save to disk
+        drop(config);
+        if let Some(path) = profile_path.borrow().as_ref() {
+            let _ = sections_config.borrow().save(path);
+        }
+    }
+
     fn move_mod_up_static(
         model: &RefCell<Option<gio::ListStore>>,
-        mod_entry: &ModEntry,
+        position: u32,
         _vfs: &RefCell<Option<VirtualFileSystem>>,
         profile_name: &Rc<RefCell<Option<String>>>,
-        selection: &SingleSelection
+        selection: &SingleSelection,
+        sections_config: &Rc<RefCell<SectionsConfig>>,
+        profile_path: &Rc<RefCell<Option<PathBuf>>>,
     ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
-            // Find position of this mod in model
-            let position = Self::find_mod_position(model_store, mod_entry);
-
-            if position == 0 {
-                return; // Already at top
+            if position == 0 || position >= model_store.n_items() {
+                return; // Already at top or invalid
             }
 
-            // Get previous mod
-            let prev_mod = model_store.item(position - 1)
-                .and_downcast::<ModEntry>()
-                .expect("Previous item must be ModEntry");
+            // Get current and previous items
+            let current_item = match model_store.item(position) {
+                Some(item) => item,
+                None => return,
+            };
+            let prev_item = match model_store.item(position - 1) {
+                Some(item) => item,
+                None => return,
+            };
 
             // Swap order values
-            let temp_order = mod_entry.order();
-            mod_entry.set_order(prev_mod.order());
-            prev_mod.set_order(temp_order);
+            let current_order = Self::get_item_order(&current_item).unwrap_or(position);
+            let prev_order = Self::get_item_order(&prev_item).unwrap_or(position - 1);
 
-            // Collect all items and sort by order
-            let n_items = model_store.n_items();
-            let mut mods: Vec<ModEntry> = Vec::new();
-            for i in 0..n_items {
-                if let Some(item) = model_store.item(i) {
-                    if let Ok(entry) = item.downcast::<ModEntry>() {
-                        mods.push(entry);
-                    }
-                }
-            }
-            mods.sort_by_key(|m| m.order());
+            Self::set_item_order(&current_item, prev_order);
+            Self::set_item_order(&prev_item, current_order);
 
-            // Clear and re-populate model in sorted order
-            model_store.remove_all();
-            for mod_entry in mods {
-                model_store.append(&mod_entry);
-            }
+            // Rebuild model sorted
+            Self::rebuild_model_sorted(model_store);
 
             // Restore selection at new position (moved up by 1)
-            if position > 0 {
-                selection.set_selected(position - 1);
-            }
+            selection.set_selected(position - 1);
 
-            // Drop the borrow before calling static methods
+            // Sync section orders and save
+            Self::sync_sections_to_config(model_store, sections_config, profile_path);
+
             drop(model_borrow);
-
-            // Save state (VFS rebuild happens on Apply button)
             Self::save_mod_state_static(model, profile_name);
         }
     }
@@ -1079,57 +1491,46 @@ impl ModListView {
     /// Move a mod down in the list (static version for closures)
     fn move_mod_down_static(
         model: &RefCell<Option<gio::ListStore>>,
-        mod_entry: &ModEntry,
+        position: u32,
         _vfs: &RefCell<Option<VirtualFileSystem>>,
         profile_name: &Rc<RefCell<Option<String>>>,
-        selection: &SingleSelection
+        selection: &SingleSelection,
+        sections_config: &Rc<RefCell<SectionsConfig>>,
+        profile_path: &Rc<RefCell<Option<PathBuf>>>,
     ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
-            // Find position of this mod in model
-            let position = Self::find_mod_position(model_store, mod_entry);
-
             if position >= model_store.n_items() - 1 {
                 return; // Already at bottom
             }
 
-            // Get next mod
-            let next_mod = model_store.item(position + 1)
-                .and_downcast::<ModEntry>()
-                .expect("Next item must be ModEntry");
+            // Get current and next items
+            let current_item = match model_store.item(position) {
+                Some(item) => item,
+                None => return,
+            };
+            let next_item = match model_store.item(position + 1) {
+                Some(item) => item,
+                None => return,
+            };
 
             // Swap order values
-            let temp_order = mod_entry.order();
-            mod_entry.set_order(next_mod.order());
-            next_mod.set_order(temp_order);
+            let current_order = Self::get_item_order(&current_item).unwrap_or(position);
+            let next_order = Self::get_item_order(&next_item).unwrap_or(position + 1);
 
-            // Collect all items and sort by order
-            let n_items = model_store.n_items();
-            let mut mods: Vec<ModEntry> = Vec::new();
-            for i in 0..n_items {
-                if let Some(item) = model_store.item(i) {
-                    if let Ok(entry) = item.downcast::<ModEntry>() {
-                        mods.push(entry);
-                    }
-                }
-            }
-            mods.sort_by_key(|m| m.order());
+            Self::set_item_order(&current_item, next_order);
+            Self::set_item_order(&next_item, current_order);
 
-            // Clear and re-populate model in sorted order
-            model_store.remove_all();
-            for mod_entry in mods {
-                model_store.append(&mod_entry);
-            }
+            // Rebuild model sorted
+            Self::rebuild_model_sorted(model_store);
 
             // Restore selection at new position (moved down by 1)
-            if position < n_items - 1 {
-                selection.set_selected(position + 1);
-            }
+            selection.set_selected(position + 1);
 
-            // Drop the borrow before calling static methods
+            // Sync section orders and save
+            Self::sync_sections_to_config(model_store, sections_config, profile_path);
+
             drop(model_borrow);
-
-            // Save state (VFS rebuild happens on Apply button)
             Self::save_mod_state_static(model, profile_name);
         }
     }
@@ -1137,54 +1538,51 @@ impl ModListView {
     /// Move a mod to top of the list (static version for closures)
     fn move_mod_to_top_static(
         model: &RefCell<Option<gio::ListStore>>,
-        mod_entry: &ModEntry,
+        position: u32,
         _vfs: &RefCell<Option<VirtualFileSystem>>,
         profile_name: &Rc<RefCell<Option<String>>>,
-        selection: &SingleSelection
+        selection: &SingleSelection,
+        sections_config: &Rc<RefCell<SectionsConfig>>,
+        profile_path: &Rc<RefCell<Option<PathBuf>>>,
     ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
-            let position = Self::find_mod_position(model_store, mod_entry);
-
-            if position == 0 {
-                return; // Already at top
+            if position == 0 || position >= model_store.n_items() {
+                return; // Already at top or invalid
             }
 
-            // Set this mod's order to 0
-            let current_order = mod_entry.order();
-            mod_entry.set_order(0);
+            let current_item = match model_store.item(position) {
+                Some(item) => item,
+                None => return,
+            };
 
-            // Shift all mods with order < current_order down by 1
+            let current_order = Self::get_item_order(&current_item).unwrap_or(position);
+
+            // Set this item's order to 0
+            Self::set_item_order(&current_item, 0);
+
+            // Shift all items with order < current_order up by 1
             for i in 0..model_store.n_items() {
+                if i == position {
+                    continue;
+                }
                 if let Some(item) = model_store.item(i) {
-                    if let Ok(entry) = item.downcast::<ModEntry>() {
-                        if entry.order() < current_order && entry.name() != mod_entry.name() {
-                            entry.set_order(entry.order() + 1);
+                    if let Some(order) = Self::get_item_order(&item) {
+                        if order < current_order {
+                            Self::set_item_order(&item, order + 1);
                         }
                     }
                 }
             }
 
-            // Collect all items and sort by order
-            let n_items = model_store.n_items();
-            let mut mods: Vec<ModEntry> = Vec::new();
-            for i in 0..n_items {
-                if let Some(item) = model_store.item(i) {
-                    if let Ok(entry) = item.downcast::<ModEntry>() {
-                        mods.push(entry);
-                    }
-                }
-            }
-            mods.sort_by_key(|m| m.order());
-
-            // Clear and re-populate model in sorted order
-            model_store.remove_all();
-            for mod_entry in mods {
-                model_store.append(&mod_entry);
-            }
+            // Rebuild model sorted
+            Self::rebuild_model_sorted(model_store);
 
             // Restore selection at position 0 (top)
             selection.set_selected(0);
+
+            // Sync section orders and save
+            Self::sync_sections_to_config(model_store, sections_config, profile_path);
 
             drop(model_borrow);
             Self::save_mod_state_static(model, profile_name);
@@ -1194,55 +1592,54 @@ impl ModListView {
     /// Move a mod to bottom of the list (static version for closures)
     fn move_mod_to_bottom_static(
         model: &RefCell<Option<gio::ListStore>>,
-        mod_entry: &ModEntry,
+        position: u32,
         _vfs: &RefCell<Option<VirtualFileSystem>>,
         profile_name: &Rc<RefCell<Option<String>>>,
-        selection: &SingleSelection
+        selection: &SingleSelection,
+        sections_config: &Rc<RefCell<SectionsConfig>>,
+        profile_path: &Rc<RefCell<Option<PathBuf>>>,
     ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
-            let position = Self::find_mod_position(model_store, mod_entry);
-            let last_position = model_store.n_items() - 1;
-
-            if position >= last_position {
-                return; // Already at bottom
+            let n_items = model_store.n_items();
+            if n_items == 0 || position >= n_items - 1 {
+                return; // Already at bottom or invalid
             }
 
-            // Set this mod's order to last
-            let current_order = mod_entry.order();
-            mod_entry.set_order(last_position);
+            let last_position = n_items - 1;
 
-            // Shift all mods with order > current_order up by 1
-            for i in 0..model_store.n_items() {
+            let current_item = match model_store.item(position) {
+                Some(item) => item,
+                None => return,
+            };
+
+            let current_order = Self::get_item_order(&current_item).unwrap_or(position);
+
+            // Set this item's order to last
+            Self::set_item_order(&current_item, last_position);
+
+            // Shift all items with order > current_order down by 1
+            for i in 0..n_items {
+                if i == position {
+                    continue;
+                }
                 if let Some(item) = model_store.item(i) {
-                    if let Ok(entry) = item.downcast::<ModEntry>() {
-                        if entry.order() > current_order && entry.name() != mod_entry.name() {
-                            entry.set_order(entry.order() - 1);
+                    if let Some(order) = Self::get_item_order(&item) {
+                        if order > current_order {
+                            Self::set_item_order(&item, order - 1);
                         }
                     }
                 }
             }
 
-            // Collect all items and sort by order
-            let n_items = model_store.n_items();
-            let mut mods: Vec<ModEntry> = Vec::new();
-            for i in 0..n_items {
-                if let Some(item) = model_store.item(i) {
-                    if let Ok(entry) = item.downcast::<ModEntry>() {
-                        mods.push(entry);
-                    }
-                }
-            }
-            mods.sort_by_key(|m| m.order());
-
-            // Clear and re-populate model in sorted order
-            model_store.remove_all();
-            for mod_entry in mods {
-                model_store.append(&mod_entry);
-            }
+            // Rebuild model sorted
+            Self::rebuild_model_sorted(model_store);
 
             // Restore selection at bottom position
             selection.set_selected(last_position);
+
+            // Sync section orders and save
+            Self::sync_sections_to_config(model_store, sections_config, profile_path);
 
             drop(model_borrow);
             Self::save_mod_state_static(model, profile_name);
@@ -1291,17 +1688,75 @@ impl ModListView {
         }
     }
 
+    /// Add a new section at the top of the list
+    fn add_section_at_selection(
+        model: &RefCell<Option<gio::ListStore>>,
+        _selection: &SingleSelection,
+        sections_config: &Rc<RefCell<SectionsConfig>>,
+        profile_path: &Rc<RefCell<Option<PathBuf>>>,
+        filter: &RefCell<Option<CustomFilter>>,
+    ) {
+        let model_borrow = model.borrow();
+        if let Some(model_store) = model_borrow.as_ref() {
+            // Always add sections at the top
+            let position = 0u32;
+
+            // Create new section with default name
+            let section = SectionHeader::new("New Section", position);
+
+            // Insert into model at position
+            model_store.insert(position, &section);
+
+            // Update order of subsequent items (position + 1 is safe now since we bounded position)
+            for i in (position + 1)..model_store.n_items() {
+                if let Some(item) = model_store.item(i) {
+                    if let Some(mod_entry) = item.downcast_ref::<ModEntry>() {
+                        mod_entry.set_order(i);
+                    } else if let Some(sec) = item.downcast_ref::<SectionHeader>() {
+                        sec.set_order(i);
+                    }
+                }
+            }
+
+            // Update section assignments based on new positions
+            Self::update_section_assignments(model_store);
+
+            // Save section to config
+            let section_data = section.to_data();
+            sections_config.borrow_mut().add_section(section_data);
+
+            if let Some(path) = profile_path.borrow().as_ref() {
+                let _ = sections_config.borrow().save(path);
+            }
+
+            // Update filter to reflect changes
+            if let Some(filter) = filter.borrow().as_ref() {
+                filter.changed(FilterChange::Different);
+            }
+        }
+    }
+
     /// Public API: Move a mod up
     pub fn move_mod_up(&self, mod_entry: &ModEntry) {
         if let Some(selection) = self.selection_model.borrow().as_ref() {
-            Self::move_mod_up_static(&self.model, mod_entry, &self.vfs, &self.profile_name, selection);
+            if let Some(model) = self.model.borrow().as_ref() {
+                let position = Self::find_mod_position(model, mod_entry);
+                if position < model.n_items() {
+                    Self::move_mod_up_static(&self.model, position, &self.vfs, &self.profile_name, selection, &self.sections_config, &self.profile_path);
+                }
+            }
         }
     }
 
     /// Public API: Move a mod down
     pub fn move_mod_down(&self, mod_entry: &ModEntry) {
         if let Some(selection) = self.selection_model.borrow().as_ref() {
-            Self::move_mod_down_static(&self.model, mod_entry, &self.vfs, &self.profile_name, selection);
+            if let Some(model) = self.model.borrow().as_ref() {
+                let position = Self::find_mod_position(model, mod_entry);
+                if position < model.n_items() {
+                    Self::move_mod_down_static(&self.model, position, &self.vfs, &self.profile_name, selection, &self.sections_config, &self.profile_path);
+                }
+            }
         }
     }
 

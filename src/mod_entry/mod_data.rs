@@ -80,6 +80,8 @@ mod imp {
         pub nexus_id: RefCell<Option<String>>,
         #[property(get, set)]
         pub conflict_count: Cell<u32>,
+        #[property(get, set)]
+        pub section_id: RefCell<Option<String>>,
     }
 
     #[glib::object_subclass]
