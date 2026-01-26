@@ -8,6 +8,7 @@ pub mod tree_item;
 pub mod conflict_detector;
 pub mod section;
 pub mod list_row;
+pub mod sorting_rules;
 
 pub use mod_data::{ModEntry, ModList};
 pub use mod_state::ModState;
@@ -19,3 +20,4 @@ pub use tree_item::TreeItem;
 pub use conflict_detector::{ConflictInfo, ModConflictSummary, ConflictScanProgress, detect_conflicts, detect_all_conflicts, enumerate_mod_files, enumerate_mod_files_with_dfmod, get_children_at_path};
 pub use section::{SectionHeader, SectionData, SectionsConfig};
 pub use list_row::ListRow;
+pub use sorting_rules::{SortingRules, SortingRule};
