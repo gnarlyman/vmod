@@ -214,7 +214,6 @@ impl ObjectImpl for ModListView {
         self.add_version_column(&column_view);
         self.add_order_column(&column_view);
         self.add_conflicts_column(&column_view);
-        self.add_nexus_column(&column_view);
 
         // Wrap in scrolled window
         let scrolled_window = ScrolledWindow::new();
@@ -242,6 +241,20 @@ impl ObjectImpl for ModListView {
         let enable_all_button = Button::with_label("Enable All");
         let disable_all_button = Button::with_label("Disable All");
 
+        // Add separator for action buttons
+        let separator2 = gtk4::Separator::new(Orientation::Vertical);
+        separator2.set_margin_start(6);
+        separator2.set_margin_end(6);
+
+        // Context-sensitive action buttons (react to selection)
+        let folder_button = Button::from_icon_name("folder-open-symbolic");
+        folder_button.set_tooltip_text(Some("Open mod folder"));
+        folder_button.set_sensitive(false);  // Disabled until a mod is selected
+
+        let nexus_button = Button::from_icon_name("go-jump-symbolic");
+        nexus_button.set_tooltip_text(Some("Open on Nexus Mods"));
+        nexus_button.set_sensitive(false);  // Disabled until a mod with nexus_id is selected
+
         button_box.append(&top_button);
         button_box.append(&up_button);
         button_box.append(&down_button);
@@ -249,6 +262,9 @@ impl ObjectImpl for ModListView {
         button_box.append(&separator);
         button_box.append(&enable_all_button);
         button_box.append(&disable_all_button);
+        button_box.append(&separator2);
+        button_box.append(&folder_button);
+        button_box.append(&nexus_button);
 
         left_box.append(&button_box);
 
@@ -369,6 +385,60 @@ impl ObjectImpl for ModListView {
         let profile_clone = profile_name_ref.clone();
         disable_all_button.connect_clicked(move |_| {
             Self::disable_all_mods_static(&model_clone, &profile_clone);
+        });
+
+        // Connect folder button - opens the selected mod's folder
+        let selection_clone = selection.clone();
+        folder_button.connect_clicked(move |_| {
+            if let Some(mod_entry) = selection_clone.selected_item().and_then(|i| i.downcast::<ModEntry>().ok()) {
+                if let Err(e) = open::that(&mod_entry.path()) {
+                    eprintln!("Failed to open folder: {}", e);
+                }
+            }
+        });
+
+        // Connect nexus button - opens the selected mod on Nexus Mods
+        let selection_clone = selection.clone();
+        nexus_button.connect_clicked(move |btn| {
+            if let Some(mod_entry) = selection_clone.selected_item().and_then(|i| i.downcast::<ModEntry>().ok()) {
+                if let Some(nexus_id) = mod_entry.nexus_id() {
+                    let url = format!("https://www.nexusmods.com/daggerfallunity/mods/{}", nexus_id);
+                    let root = btn.root();
+                    if let Some(window) = root.and_downcast::<gtk4::Window>() {
+                        let launcher = UriLauncher::new(&url);
+                        launcher.launch(Some(&window), gio::Cancellable::NONE, |result| {
+                            if let Err(e) = result {
+                                eprintln!("Failed to open URL: {}", e);
+                            }
+                        });
+                    }
+                }
+            }
+        });
+
+        // Update folder/nexus button sensitivity when selection changes
+        let folder_button_clone = folder_button.clone();
+        let nexus_button_clone = nexus_button.clone();
+        selection.connect_selected_item_notify(move |sel| {
+            if let Some(mod_entry) = sel.selected_item().and_then(|i| i.downcast::<ModEntry>().ok()) {
+                // A mod is selected - enable folder button, conditionally enable nexus button
+                folder_button_clone.set_sensitive(true);
+                folder_button_clone.set_tooltip_text(Some(&format!("Open folder: {}", mod_entry.path().display())));
+
+                if let Some(nexus_id) = mod_entry.nexus_id() {
+                    nexus_button_clone.set_sensitive(true);
+                    nexus_button_clone.set_tooltip_text(Some(&format!("Open mod {} on Nexus Mods", nexus_id)));
+                } else {
+                    nexus_button_clone.set_sensitive(false);
+                    nexus_button_clone.set_tooltip_text(Some("This mod is not from Nexus Mods"));
+                }
+            } else {
+                // No mod selected (or a section is selected) - disable both buttons
+                folder_button_clone.set_sensitive(false);
+                folder_button_clone.set_tooltip_text(Some("Open mod folder"));
+                nexus_button_clone.set_sensitive(false);
+                nexus_button_clone.set_tooltip_text(Some("Open on Nexus Mods"));
+            }
         });
 
         // Connect scan button
@@ -955,236 +1025,6 @@ impl ModListView {
 
         let column = ColumnViewColumn::new(Some("⚠"), Some(factory));
         column.set_fixed_width(50);
-        column_view.append_column(&column);
-    }
-
-    fn add_nexus_column(&self, column_view: &ColumnView) {
-        let factory = SignalListItemFactory::new();
-        let model_ref = self.model.clone();
-        let sections_config_ref = self.sections_config.clone();
-        let profile_path_ref = self.profile_path.clone();
-
-        // Setup phase: Create box with buttons (content changes based on row type)
-        factory.connect_setup(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
-                .expect("Item must be ListItem");
-
-            let button_box = Box::new(Orientation::Horizontal, 4);
-            button_box.set_margin_end(16);
-            list_item.set_child(Some(&button_box));
-        });
-
-        // Bind phase: Connect button clicks
-        let model_clone = model_ref.clone();
-        let sections_config_clone = sections_config_ref.clone();
-        let profile_path_clone = profile_path_ref.clone();
-        factory.connect_bind(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
-                .expect("Item must be ListItem");
-
-            let button_box = list_item
-                .child()
-                .and_downcast::<Box>()
-                .expect("Child must be Box");
-
-            // Clear any previous buttons
-            while let Some(child) = button_box.first_child() {
-                button_box.remove(&child);
-            }
-
-            // Check if this is a section header
-            if let Some(section) = list_item.item().and_downcast::<SectionHeader>() {
-                // For sections: show rename and delete buttons
-                let rename_button = Button::from_icon_name("document-edit-symbolic");
-                rename_button.add_css_class("flat");
-                rename_button.set_tooltip_text(Some("Rename section"));
-
-                let delete_button = Button::from_icon_name("user-trash-symbolic");
-                delete_button.add_css_class("flat");
-                delete_button.set_tooltip_text(Some("Delete section"));
-
-                // Rename handler
-                let section_id = section.section_id();
-                let section_clone = section.clone();
-                let sections_config_for_rename = sections_config_clone.clone();
-                let profile_path_for_rename = profile_path_clone.clone();
-                let section_id_for_rename = section_id.clone();
-                let rename_handler = rename_button.connect_clicked(move |btn| {
-                    // Create a simple rename dialog using popover
-                    let popover = gtk4::Popover::new();
-                    let entry = Entry::new();
-                    entry.set_text(&section_clone.name());
-                    entry.set_width_chars(20);
-
-                    let section_for_activate = section_clone.clone();
-                    let section_id_for_save = section_id_for_rename.clone();
-                    let config_for_save = sections_config_for_rename.clone();
-                    let path_for_save = profile_path_for_rename.clone();
-                    entry.connect_activate(glib::clone!(
-                        #[weak] popover,
-                        move |e| {
-                            let new_name = e.text().to_string();
-                            section_for_activate.set_name(new_name.clone());
-
-                            // Persist the rename
-                            config_for_save.borrow_mut().rename_section(&section_id_for_save, &new_name);
-                            if let Some(path) = path_for_save.borrow().as_ref() {
-                                let _ = config_for_save.borrow().save(path);
-                            }
-
-                            popover.popdown();
-                        }
-                    ));
-
-                    popover.set_child(Some(&entry));
-                    popover.set_parent(btn);
-                    popover.popup();
-                });
-
-                // Delete handler
-                let model_for_delete = model_clone.clone();
-                let section_id_for_delete = section_id;
-                let sections_config_for_delete = sections_config_clone.clone();
-                let profile_path_for_delete = profile_path_clone.clone();
-                let delete_handler = delete_button.connect_clicked(move |_btn| {
-                    // Remove section from model
-                    if let Some(model) = model_for_delete.borrow().as_ref() {
-                        // Find and remove the section
-                        for i in 0..model.n_items() {
-                            if let Some(item) = model.item(i) {
-                                if let Some(sec) = item.downcast_ref::<SectionHeader>() {
-                                    if sec.section_id() == section_id_for_delete {
-                                        model.remove(i);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Update config
-                    sections_config_for_delete.borrow_mut().remove_section(&section_id_for_delete);
-                    if let Some(path) = profile_path_for_delete.borrow().as_ref() {
-                        let _ = sections_config_for_delete.borrow().save(path);
-                    }
-                });
-
-                button_box.append(&rename_button);
-                button_box.append(&delete_button);
-
-                unsafe {
-                    list_item.set_data("is-section-nexus", true);
-                    list_item.set_data("rename-handler-id", rename_handler);
-                    list_item.set_data("delete-handler-id", delete_handler);
-                }
-            } else if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
-                // For mods: show nexus and folder buttons
-                let nexus_button = Button::from_icon_name("go-jump-symbolic");
-                nexus_button.add_css_class("flat");
-
-                let folder_button = Button::from_icon_name("folder-open-symbolic");
-                folder_button.add_css_class("flat");
-
-                // Get nexus_id and configure nexus button state
-                let nexus_id = mod_entry.nexus_id();
-
-                if let Some(id) = nexus_id {
-                    nexus_button.set_sensitive(true);
-                    nexus_button.set_tooltip_text(Some(&format!("Open mod {} on Nexus Mods", id)));
-
-                    // Connect click handler to open Nexus URL
-                    let id_clone = id.clone();
-                    let handler_id = nexus_button.connect_clicked(move |btn| {
-                        let url = format!("https://www.nexusmods.com/daggerfallunity/mods/{}", id_clone);
-
-                        let root = btn.root();
-                        if let Some(window) = root.and_downcast::<gtk4::Window>() {
-                            let launcher = UriLauncher::new(&url);
-                            launcher.launch(Some(&window), gio::Cancellable::NONE, |result| {
-                                if let Err(e) = result {
-                                    eprintln!("Failed to open URL: {}", e);
-                                }
-                            });
-                        }
-                    });
-                    unsafe { list_item.set_data("nexus-handler-id", handler_id); }
-                } else {
-                    nexus_button.set_sensitive(false);
-                    nexus_button.set_tooltip_text(Some("This mod is not from Nexus Mods"));
-                }
-
-                // Configure folder button - always enabled
-                let mod_path = mod_entry.path();
-                folder_button.set_sensitive(true);
-                folder_button.set_tooltip_text(Some(&format!("Open folder: {}", mod_path.display())));
-
-                let folder_handler_id = folder_button.connect_clicked(move |_btn| {
-                    if let Err(e) = open::that(&mod_path) {
-                        eprintln!("Failed to open folder: {}", e);
-                    }
-                });
-
-                button_box.append(&nexus_button);
-                button_box.append(&folder_button);
-
-                unsafe {
-                    list_item.set_data("is-section-nexus", false);
-                    list_item.set_data("folder-handler-id", folder_handler_id);
-                }
-            }
-        });
-
-        // Unbind phase: Disconnect signal handlers
-        factory.connect_unbind(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
-                .expect("Item must be ListItem");
-
-            let is_section: bool = unsafe {
-                list_item.steal_data::<bool>("is-section-nexus").unwrap_or(false)
-            };
-
-            let button_box = list_item
-                .child()
-                .and_downcast::<Box>()
-                .expect("Child must be Box");
-
-            if is_section {
-                // Clean up section button handlers
-                if let Some(rename_btn) = button_box.first_child().and_downcast::<Button>() {
-                    unsafe {
-                        if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("rename-handler-id") {
-                            rename_btn.disconnect(handler_id);
-                        }
-                    }
-                    if let Some(delete_btn) = rename_btn.next_sibling().and_downcast::<Button>() {
-                        unsafe {
-                            if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("delete-handler-id") {
-                                delete_btn.disconnect(handler_id);
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Clean up mod button handlers
-                if let Some(nexus_btn) = button_box.first_child().and_downcast::<Button>() {
-                    unsafe {
-                        if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("nexus-handler-id") {
-                            nexus_btn.disconnect(handler_id);
-                        }
-                    }
-                    if let Some(folder_btn) = nexus_btn.next_sibling().and_downcast::<Button>() {
-                        unsafe {
-                            if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("folder-handler-id") {
-                                folder_btn.disconnect(handler_id);
-                            }
-                        }
-                    }
-                }
-            }
-        });
-
-        let column = ColumnViewColumn::new(Some("Actions"), Some(factory));
-        column.set_fixed_width(100);
         column_view.append_column(&column);
     }
 
