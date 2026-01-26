@@ -139,6 +139,11 @@ impl ObjectImpl for ModListView {
         backup_button.set_tooltip_text(Some("Create or restore mod list backups"));
         filter_row.append(&backup_button);
 
+        // Refresh button
+        let refresh_button = Button::with_label("Refresh");
+        refresh_button.set_tooltip_text(Some("Rescan mod folders"));
+        filter_row.append(&refresh_button);
+
         left_box.append(&filter_row);
 
         // Create the ListStore to hold ModEntry and SectionHeader objects
@@ -417,6 +422,12 @@ impl ObjectImpl for ModListView {
                 &profile_path_for_backup,
                 &widget_for_backup,
             );
+        });
+
+        // Connect refresh button
+        let obj_for_refresh = obj.clone();
+        refresh_button.connect_clicked(move |_| {
+            obj_for_refresh.imp().reload();
         });
 
         paned.set_start_child(Some(&left_box));
