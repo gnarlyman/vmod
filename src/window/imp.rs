@@ -46,6 +46,9 @@ impl ObjectImpl for VmodWindow {
         // Load window state
         obj.load_window_state();
 
+        // Set minimum window size to prevent tables from being cut off
+        obj.set_size_request(900, 600);
+
         // Save window state on close
         obj.connect_close_request(|window| {
             window.save_window_state();

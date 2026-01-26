@@ -731,8 +731,8 @@ impl ModListView {
             }
         });
 
-        let column = ColumnViewColumn::new(Some("Enabled"), Some(factory));
-        column.set_fixed_width(80);
+        let column = ColumnViewColumn::new(Some("On"), Some(factory));
+        column.set_fixed_width(35);
         column_view.append_column(&column);
     }
 
@@ -811,7 +811,7 @@ impl ModListView {
             }
         });
 
-        let column = ColumnViewColumn::new(Some("Mod Name"), Some(factory));
+        let column = ColumnViewColumn::new(Some("Name"), Some(factory));
         column.set_expand(true);
         column_view.append_column(&column);
     }
@@ -867,8 +867,8 @@ impl ModListView {
             }
         });
 
-        let column = ColumnViewColumn::new(Some("Version"), Some(factory));
-        column.set_fixed_width(100);
+        let column = ColumnViewColumn::new(Some("Ver"), Some(factory));
+        column.set_fixed_width(60);
         column_view.append_column(&column);
     }
 
@@ -935,8 +935,8 @@ impl ModListView {
             }
         });
 
-        let column = ColumnViewColumn::new(Some("Order"), Some(factory));
-        column.set_fixed_width(80);
+        let column = ColumnViewColumn::new(Some("#"), Some(factory));
+        column.set_fixed_width(35);
         column_view.append_column(&column);
     }
 
@@ -1024,7 +1024,7 @@ impl ModListView {
         });
 
         let column = ColumnViewColumn::new(Some("⚠"), Some(factory));
-        column.set_fixed_width(50);
+        column.set_fixed_width(35);
         column_view.append_column(&column);
     }
 

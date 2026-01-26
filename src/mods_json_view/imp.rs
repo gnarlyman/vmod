@@ -220,8 +220,8 @@ impl ModsJsonView {
                 .build();
         });
 
-        let column = ColumnViewColumn::new(Some("Enabled"), Some(factory));
-        column.set_fixed_width(80);
+        let column = ColumnViewColumn::new(Some("On"), Some(factory));
+        column.set_fixed_width(35);
         column_view.append_column(&column);
     }
 
@@ -306,8 +306,8 @@ impl ModsJsonView {
                 .build();
         });
 
-        let column = ColumnViewColumn::new(Some("FileName"), Some(factory));
-        column.set_fixed_width(200);
+        let column = ColumnViewColumn::new(Some("File"), Some(factory));
+        column.set_fixed_width(120);
         column_view.append_column(&column);
     }
 
@@ -347,8 +347,8 @@ impl ModsJsonView {
             );
         });
 
-        let column = ColumnViewColumn::new(Some("Priority"), Some(factory));
-        column.set_fixed_width(80);
+        let column = ColumnViewColumn::new(Some("#"), Some(factory));
+        column.set_fixed_width(35);
         column_view.append_column(&column);
     }
 
