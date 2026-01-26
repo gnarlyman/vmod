@@ -176,10 +176,9 @@ impl ObjectImpl for ModsJsonView {
         });
 
         // Connect sort button
-        let mods_json_path_for_sort = self.mods_json_path.clone();
-        let model_for_sort = self.model.clone();
+        let obj_for_sort = obj.clone();
         sort_button.connect_clicked(move |_| {
-            Self::apply_sorting_rules_static(&mods_json_path_for_sort, &model_for_sort);
+            obj_for_sort.imp().apply_sorting_rules();
         });
 
         self.column_view.replace(Some(column_view));
@@ -621,13 +620,10 @@ impl ModsJsonView {
         }
     }
 
-    /// Apply sorting rules from sorting_rules.json (static version for closures)
-    fn apply_sorting_rules_static(
-        mods_json_path: &RefCell<Option<PathBuf>>,
-        model: &RefCell<Option<gio::ListStore>>,
-    ) {
+    /// Apply sorting rules from sorting_rules.json
+    fn apply_sorting_rules(&self) {
         // Get Mods.json path
-        let path = match mods_json_path.borrow().as_ref() {
+        let path = match self.mods_json_path.borrow().as_ref() {
             Some(p) => p.clone(),
             None => {
                 eprintln!("Mods.json path not set");
@@ -683,7 +679,7 @@ impl ModsJsonView {
         }
 
         // Reload the model with sorted entries
-        if let Some(model_store) = model.borrow().as_ref() {
+        if let Some(model_store) = self.model.borrow().as_ref() {
             model_store.remove_all();
             for entry in &sorted_entries {
                 let dfmod_entry = DfmodEntry::new(
