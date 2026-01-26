@@ -46,18 +46,18 @@ impl ObjectImpl for ModsJsonView {
         obj.set_margin_start(6);
         obj.set_margin_end(12);
 
+        // Header label
+        let header_label = Label::new(Some("Mods.json Entries"));
+        header_label.add_css_class("heading");
+        header_label.set_xalign(0.0);
+        obj.append(&header_label);
+
         // Sort button row
         let sort_row = Box::new(Orientation::Horizontal, 6);
         let sort_button = Button::with_label("Sort Now");
         sort_button.set_tooltip_text(Some("Apply sorting rules from sorting_rules.json"));
         sort_row.append(&sort_button);
         obj.append(&sort_row);
-
-        // Header label
-        let header_label = Label::new(Some("Mods.json Entries"));
-        header_label.add_css_class("heading");
-        header_label.set_xalign(0.0);
-        obj.append(&header_label);
 
         // Create the ListStore to hold DfmodEntry objects
         let model = gio::ListStore::new::<DfmodEntry>();
