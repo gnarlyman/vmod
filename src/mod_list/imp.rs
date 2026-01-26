@@ -393,8 +393,16 @@ impl ObjectImpl for ModListView {
         // Update conflict panel when mod is selected (uses cached conflict data)
         let conflict_panel_clone = conflict_panel.clone();
         let conflict_results_for_selection = self.conflict_results.clone();
+        let mods_json_view_clone = mods_json_view.clone();
         selection_model.connect_selected_item_notify(move |sel| {
             if let Some(mod_entry) = sel.selected_item().and_then(|i| i.downcast::<ModEntry>().ok()) {
+                // Highlight related dfmods in Mods.json panel
+                if let Ok(dfmods) = crate::mod_entry::parse_dfmod_basic(&mod_entry.path()) {
+                    mods_json_view_clone.highlight_entries(
+                        &dfmods.iter().map(|d| d.file_name.clone()).collect::<Vec<_>>()
+                    );
+                }
+
                 // Look up cached conflict data for this mod
                 let mod_path = mod_entry.path();
                 let results = conflict_results_for_selection.borrow();
@@ -402,6 +410,7 @@ impl ObjectImpl for ModListView {
 
                 conflict_panel_clone.update_with_cached_conflicts(&mod_path, summary);
             } else {
+                mods_json_view_clone.clear_highlights();
                 conflict_panel_clone.clear();
             }
         });
@@ -1795,7 +1804,7 @@ impl ModListView {
                 if let Ok(mod_entry) = obj.downcast::<ModEntry>() {
                     if mod_entry.enabled() {
                         // Check if this mod has .dfmod files
-                        if let Ok(dfmod_infos) = crate::mod_entry::parse_dfmod(&mod_entry.path()) {
+                        if let Ok(dfmod_infos) = crate::mod_entry::parse_dfmod_basic(&mod_entry.path()) {
                             for dfmod_info in dfmod_infos {
                                 enabled_mod_names.insert(dfmod_info.file_name.clone());
                             }
@@ -1822,7 +1831,7 @@ impl ModListView {
             if let Some(obj) = model.item(i) {
                 if let Ok(mod_entry) = obj.downcast::<ModEntry>() {
                     if mod_entry.enabled() {
-                        if let Ok(dfmod_infos) = crate::mod_entry::parse_dfmod(&mod_entry.path()) {
+                        if let Ok(dfmod_infos) = crate::mod_entry::parse_dfmod_basic(&mod_entry.path()) {
                             for dfmod_info in dfmod_infos {
                                 if !existing_file_names.contains(&dfmod_info.file_name) {
                                     existing_entries.push(crate::mod_entry::ModsJsonEntry {
