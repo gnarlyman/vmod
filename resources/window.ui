@@ -12,6 +12,10 @@
           <attribute name="label" translatable="yes">Open _Game Folder</attribute>
           <attribute name="action">app.open_game_folder</attribute>
         </item>
+        <item>
+          <attribute name="label" translatable="yes">Open _Unity Config Folder</attribute>
+          <attribute name="action">app.open_unity_config_folder</attribute>
+        </item>
       </section>
       <section>
         <item>

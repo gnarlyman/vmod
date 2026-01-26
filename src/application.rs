@@ -111,7 +111,18 @@ impl VmodApplication {
             })
             .build();
 
-        self.app.add_action_entries([quit, preferences, open_profile_folder, open_game_folder]);
+        let open_unity_config_folder = gio::ActionEntry::builder("open_unity_config_folder")
+            .activate(move |_app: &Application, _, _| {
+                if let Some(config_dir) = dirs::config_dir() {
+                    let unity_folder = config_dir.join("unity3d/Daggerfall Workshop/Daggerfall Unity");
+                    if let Err(e) = open::that(&unity_folder) {
+                        eprintln!("Failed to open Unity config folder: {}", e);
+                    }
+                }
+            })
+            .build();
+
+        self.app.add_action_entries([quit, preferences, open_profile_folder, open_game_folder, open_unity_config_folder]);
 
         // Set up keyboard accelerators
         self.app.set_accels_for_action("app.quit", &["<Ctrl>Q"]);

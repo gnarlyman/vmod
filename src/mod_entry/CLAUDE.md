@@ -23,4 +23,14 @@
 | #1132 | 8:31 PM | ✅ | Added GTK4 Prelude Import to ModEntry | ~150 |
 | #1131 | " | 🔴 | Removed Redundant ParentType Declaration in ModEntry | ~182 |
 | #1115 | 8:27 PM | 🟣 | ModEntry Data Model with Filesystem Scanning | ~471 |
+
+### Jan 26, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #2253 | 2:41 AM | ⚖️ | Designed constraint-based sorting system using stable topological sort | ~499 |
+| #2252 | " | 🔵 | Sorting implementation comment mentions topological sort but doesn't implement it | ~312 |
+| #2251 | 2:40 AM | ⚖️ | Current sorting implementation uses sequential rule-following with constrained/unconstrained split | ~471 |
+| #2246 | 2:39 AM | 🔵 | ModsJsonEntry structure and load priority management | ~288 |
+| #2241 | " | 🔵 | Current sorting rules implementation uses sequential rule-following approach | ~373 |
 </claude-mem-context>
