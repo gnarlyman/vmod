@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use crate::mod_entry::{ModEntry, ModList, ModState, VirtualFileSystem, load_mods_json, save_mods_json, DfmodCacheKey, ModConflictSummary, detect_all_conflicts, SectionHeader, SectionsConfig, SortingRules, BackupManager};
+use crate::mod_entry::{ModEntry, ModList, ModState, VirtualFileSystem, load_mods_json, save_mods_json, DfmodCacheKey, ModConflictSummary, detect_all_conflicts, SectionHeader, SectionsConfig, BackupManager};
 use crate::mods_json_view::ModsJsonView;
 use crate::conflict_panel::ConflictPanel;
 
@@ -133,11 +133,6 @@ impl ObjectImpl for ModListView {
         let scan_button = Button::with_label("Scan Conflicts");
         self.scan_button.replace(Some(scan_button.clone()));
         filter_row.append(&scan_button);
-
-        // Sort Now button
-        let sort_button = Button::with_label("Sort Now");
-        sort_button.set_tooltip_text(Some("Apply sorting rules from sorting_rules.json"));
-        filter_row.append(&sort_button);
 
         // Backup button
         let backup_button = Button::with_label("Backup");
@@ -409,12 +404,6 @@ impl ObjectImpl for ModListView {
                 &filter_clone,
                 &column_view_clone,
             );
-        });
-
-        // Connect sort button
-        let widget_for_sort = obj.clone();
-        sort_button.connect_clicked(move |_| {
-            widget_for_sort.imp().apply_sorting_rules();
         });
 
         // Connect backup button
@@ -2014,72 +2003,6 @@ impl ModListView {
         mods_json_view.load_mods_json(mods_json_path);
 
         Ok(())
-    }
-
-    /// Apply sorting rules from sorting_rules.json to the mod load order
-    fn apply_sorting_rules(&self) {
-        // Get Mods.json path
-        let mods_json_path = match self.mods_json_path.borrow().as_ref() {
-            Some(path) => path.clone(),
-            None => {
-                eprintln!("Mods.json path not set");
-                return;
-            }
-        };
-
-        // Load sorting rules from ~/.config/vmod/sorting_rules.json
-        let config_dir = match dirs::config_dir() {
-            Some(dir) => dir.join("vmod"),
-            None => {
-                eprintln!("Could not find config directory");
-                return;
-            }
-        };
-        let rules_path = config_dir.join("sorting_rules.json");
-
-        let rules = match SortingRules::load(&rules_path) {
-            Ok(rules) => rules,
-            Err(e) => {
-                eprintln!("Failed to load sorting rules: {}", e);
-                return;
-            }
-        };
-
-        if rules.rules.is_empty() {
-            eprintln!("No sorting rules found in {:?}", rules_path);
-            return;
-        }
-
-        // Load current Mods.json
-        let entries = match load_mods_json(&mods_json_path) {
-            Ok(entries) => entries,
-            Err(e) => {
-                eprintln!("Failed to load Mods.json: {}", e);
-                return;
-            }
-        };
-
-        // Apply sorting
-        let sorted_entries = match rules.apply_sort(&entries) {
-            Ok(sorted) => sorted,
-            Err(e) => {
-                eprintln!("Failed to sort mods: {}", e);
-                return;
-            }
-        };
-
-        // Save sorted Mods.json
-        if let Err(e) = save_mods_json(&mods_json_path, &sorted_entries) {
-            eprintln!("Failed to save Mods.json: {}", e);
-            return;
-        }
-
-        // Reload ModsJsonView
-        if let Some(mods_json_view) = self.mods_json_view.borrow().as_ref() {
-            mods_json_view.load_mods_json(&mods_json_path);
-        }
-
-        println!("Applied sorting rules: {} mods reordered", sorted_entries.len());
     }
 
     /// Start async conflict scanning on a background thread

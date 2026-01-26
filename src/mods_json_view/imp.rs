@@ -7,7 +7,7 @@ use gtk4::{
 use std::cell::RefCell;
 use std::path::PathBuf;
 
-use crate::mod_entry::{DfmodEntry, load_mods_json, save_mods_json};
+use crate::mod_entry::{DfmodEntry, load_mods_json, save_mods_json, SortingRules};
 
 pub struct ModsJsonView {
     pub column_view: RefCell<Option<ColumnView>>,
@@ -45,6 +45,13 @@ impl ObjectImpl for ModsJsonView {
         obj.set_margin_bottom(12);
         obj.set_margin_start(6);
         obj.set_margin_end(12);
+
+        // Sort button row
+        let sort_row = Box::new(Orientation::Horizontal, 6);
+        let sort_button = Button::with_label("Sort Now");
+        sort_button.set_tooltip_text(Some("Apply sorting rules from sorting_rules.json"));
+        sort_row.append(&sort_button);
+        obj.append(&sort_row);
 
         // Header label
         let header_label = Label::new(Some("Mods.json Entries"));
@@ -166,6 +173,13 @@ impl ObjectImpl for ModsJsonView {
         let model_clone = model_ref.clone();
         disable_all_button.connect_clicked(move |_| {
             Self::disable_all_entries_static(&model_clone);
+        });
+
+        // Connect sort button
+        let mods_json_path_for_sort = self.mods_json_path.clone();
+        let model_for_sort = self.model.clone();
+        sort_button.connect_clicked(move |_| {
+            Self::apply_sorting_rules_static(&mods_json_path_for_sort, &model_for_sort);
         });
 
         self.column_view.replace(Some(column_view));
@@ -605,6 +619,84 @@ impl ModsJsonView {
                 }
             }
         }
+    }
+
+    /// Apply sorting rules from sorting_rules.json (static version for closures)
+    fn apply_sorting_rules_static(
+        mods_json_path: &RefCell<Option<PathBuf>>,
+        model: &RefCell<Option<gio::ListStore>>,
+    ) {
+        // Get Mods.json path
+        let path = match mods_json_path.borrow().as_ref() {
+            Some(p) => p.clone(),
+            None => {
+                eprintln!("Mods.json path not set");
+                return;
+            }
+        };
+
+        // Load sorting rules from ~/.config/vmod/sorting_rules.json
+        let config_dir = match dirs::config_dir() {
+            Some(dir) => dir.join("vmod"),
+            None => {
+                eprintln!("Could not find config directory");
+                return;
+            }
+        };
+        let rules_path = config_dir.join("sorting_rules.json");
+
+        let rules = match SortingRules::load(&rules_path) {
+            Ok(rules) => rules,
+            Err(e) => {
+                eprintln!("Failed to load sorting rules: {}", e);
+                return;
+            }
+        };
+
+        if rules.rules.is_empty() {
+            eprintln!("No sorting rules found in {:?}", rules_path);
+            return;
+        }
+
+        // Load current Mods.json
+        let entries = match load_mods_json(&path) {
+            Ok(entries) => entries,
+            Err(e) => {
+                eprintln!("Failed to load Mods.json: {}", e);
+                return;
+            }
+        };
+
+        // Apply sorting
+        let sorted_entries = match rules.apply_sort(&entries) {
+            Ok(sorted) => sorted,
+            Err(e) => {
+                eprintln!("Failed to sort mods: {}", e);
+                return;
+            }
+        };
+
+        // Save sorted Mods.json
+        if let Err(e) = save_mods_json(&path, &sorted_entries) {
+            eprintln!("Failed to save Mods.json: {}", e);
+            return;
+        }
+
+        // Reload the model with sorted entries
+        if let Some(model_store) = model.borrow().as_ref() {
+            model_store.remove_all();
+            for entry in &sorted_entries {
+                let dfmod_entry = DfmodEntry::new(
+                    entry.file_name.clone(),
+                    entry.title.clone(),
+                    entry.enabled,
+                    entry.load_priority,
+                );
+                model_store.append(&dfmod_entry);
+            }
+        }
+
+        println!("Applied sorting rules: {} mods reordered", sorted_entries.len());
     }
 
     pub fn highlight_entries(&self, file_names: &[String]) {
