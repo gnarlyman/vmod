@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::mod_entry::{TreeItem, detect_conflicts, get_children_at_path};
+use crate::mod_entry::{TreeItem, detect_conflicts, get_children_at_path, parse_dfmod};
 
 pub struct ConflictPanel {
     pub notebook: RefCell<Option<Notebook>>,
@@ -21,6 +21,8 @@ pub struct ConflictPanel {
     pub current_mod_path: Rc<RefCell<Option<PathBuf>>>,
     // Store conflict data for the tree model callback
     pub conflict_data: Rc<RefCell<HashMap<String, Vec<String>>>>,
+    // Store dfmod asset paths for the tree model callback (dfmod filename -> asset paths)
+    pub dfmod_assets: Rc<RefCell<HashMap<String, Vec<String>>>>,
 }
 
 impl Default for ConflictPanel {
@@ -33,6 +35,7 @@ impl Default for ConflictPanel {
             files_model: RefCell::new(None),
             current_mod_path: Rc::new(RefCell::new(None)),
             conflict_data: Rc::new(RefCell::new(HashMap::new())),
+            dfmod_assets: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 }
@@ -175,6 +178,8 @@ impl ObjectImpl for ConflictPanel {
 
         // Store the mod path for child model creation
         let mod_path_ref = self.current_mod_path.clone();
+        // Store dfmod assets reference for the callback
+        let dfmod_assets_ref = self.dfmod_assets.clone();
 
         let files_tree_model = TreeListModel::new(
             files_store.clone(),
@@ -183,7 +188,25 @@ impl ObjectImpl for ConflictPanel {
             move |item| {
                 let tree_item = item.downcast_ref::<TreeItem>().unwrap();
                 if tree_item.is_expandable() {
-                    // Get the relative path from this item
+                    let item_type = tree_item.item_type();
+
+                    // Handle dfmod archives (type 3) - return asset paths
+                    if item_type == 3 {
+                        // full_path stores the dfmod file_name (lookup key)
+                        let dfmod_key = tree_item.full_path();
+                        let assets = dfmod_assets_ref.borrow();
+                        if let Some(asset_paths) = assets.get(&dfmod_key) {
+                            let children_store = gio::ListStore::new::<TreeItem>();
+                            for asset_path in asset_paths {
+                                let child = TreeItem::new_file(asset_path, asset_path);
+                                children_store.append(&child);
+                            }
+                            return Some(children_store.upcast());
+                        }
+                        return None;
+                    }
+
+                    // Handle folders (type 1) - get filesystem children
                     let relative_path = tree_item.full_path();
 
                     // Get mod path from stored reference
@@ -241,19 +264,34 @@ impl ObjectImpl for ConflictPanel {
 
                 if let Some(tree_item) = row.item().and_downcast::<TreeItem>() {
                     let label = expander.child().and_downcast::<Label>().unwrap();
-                    label.set_text(&tree_item.display_name());
+
+                    let item_type = tree_item.item_type();
+                    let display = tree_item.display_name();
+                    let asset_count = tree_item.conflict_count();
+
+                    // Format text based on type
+                    let text = if item_type == 3 && asset_count > 0 {
+                        // Dfmod archive with asset count
+                        format!("{} ({} assets)", display, asset_count)
+                    } else {
+                        display
+                    };
+                    label.set_text(&text);
 
                     // Style based on type
                     label.remove_css_class("heading");
                     label.remove_css_class("dim-label");
+                    label.remove_css_class("accent");
 
-                    let item_type = tree_item.item_type();
                     if item_type == 1 {
                         // Folder
                         label.add_css_class("heading");
                     } else if item_type == 2 {
                         // File
                         label.add_css_class("dim-label");
+                    } else if item_type == 3 {
+                        // Dfmod archive - use accent style
+                        label.add_css_class("accent");
                     }
                 }
             }
@@ -359,24 +397,49 @@ impl ConflictPanel {
 
     /// Update the files tab
     fn update_files(&self, mod_path: &PathBuf) {
+        // Clear dfmod assets from previous selection
+        self.dfmod_assets.borrow_mut().clear();
+
         if let Some(model) = self.files_model.borrow().as_ref() {
             model.remove_all();
 
             // Get top-level children (folders in mod root)
             let children = get_children_at_path(mod_path, "");
 
-            if children.is_empty() {
+            let mut has_items = false;
+
+            // Add loose files/folders first
+            for (name, rel_path, is_dir) in children {
+                let item = if is_dir {
+                    TreeItem::new_folder(&name, &rel_path)
+                } else {
+                    TreeItem::new_file(&name, &rel_path)
+                };
+                model.append(&item);
+                has_items = true;
+            }
+
+            // Parse dfmod files and add them (with full asset extraction)
+            if let Ok(dfmods) = parse_dfmod(mod_path) {
+                for dfmod in dfmods {
+                    let asset_count = dfmod.asset_paths.len() as u32;
+
+                    // Store assets for the tree model callback
+                    self.dfmod_assets
+                        .borrow_mut()
+                        .insert(dfmod.file_name.clone(), dfmod.asset_paths);
+
+                    // Add dfmod item to the tree
+                    let dfmod_display = format!("{}.dfmod", dfmod.file_name);
+                    let dfmod_item = TreeItem::new_dfmod(&dfmod_display, &dfmod.file_name, asset_count);
+                    model.append(&dfmod_item);
+                    has_items = true;
+                }
+            }
+
+            if !has_items {
                 let empty = TreeItem::new("No files found", "", false, 2);
                 model.append(&empty);
-            } else {
-                for (name, rel_path, is_dir) in children {
-                    let item = if is_dir {
-                        TreeItem::new_folder(&name, &rel_path)
-                    } else {
-                        TreeItem::new_file(&name, &rel_path)
-                    };
-                    model.append(&item);
-                }
             }
         }
     }
@@ -385,6 +448,7 @@ impl ConflictPanel {
     pub fn clear(&self) {
         self.current_mod_path.replace(None);
         self.conflict_data.borrow_mut().clear();
+        self.dfmod_assets.borrow_mut().clear();
 
         if let Some(model) = self.conflicts_model.borrow().as_ref() {
             model.remove_all();

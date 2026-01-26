@@ -83,4 +83,16 @@ impl TreeItem {
             .property("conflict-count", 0u32)
             .build()
     }
+
+    /// Create a dfmod archive item (expandable, shows contained assets)
+    /// item_type 3 = dfmod archive
+    pub fn new_dfmod(name: &str, path: &str, asset_count: u32) -> Self {
+        Object::builder()
+            .property("display-name", name)
+            .property("full-path", path)
+            .property("is-expandable", true)
+            .property("item-type", 3u32)
+            .property("conflict-count", asset_count)
+            .build()
+    }
 }

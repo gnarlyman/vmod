@@ -266,8 +266,8 @@ impl ObjectImpl for ModListView {
         let model_clone = self.model.clone();
         selection_model.connect_selected_item_notify(move |sel| {
             if let Some(mod_entry) = sel.selected_item().and_then(|i| i.downcast::<ModEntry>().ok()) {
-                // Highlight related dfmods
-                if let Ok(dfmods) = crate::mod_entry::parse_dfmod(&mod_entry.path()) {
+                // Highlight related dfmods (use basic parsing - no asset extraction for speed)
+                if let Ok(dfmods) = crate::mod_entry::parse_dfmod_basic(&mod_entry.path()) {
                     mods_json_view_clone.highlight_entries(&dfmods.iter().map(|d| d.file_name.clone()).collect::<Vec<_>>());
                 }
 
