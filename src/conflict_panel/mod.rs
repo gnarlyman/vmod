@@ -4,6 +4,8 @@ use gtk4::{gio, glib};
 use gtk4::subclass::prelude::*;
 use std::path::PathBuf;
 
+use crate::mod_entry::ModConflictSummary;
+
 glib::wrapper! {
     pub struct ConflictPanel(ObjectSubclass<imp::ConflictPanel>)
         @extends gtk4::Box, gtk4::Widget,
@@ -16,14 +18,13 @@ impl ConflictPanel {
         glib::Object::builder().build()
     }
 
-    /// Update the panel to show conflicts and files for the selected mod
-    pub fn update_for_mod(
+    /// Update the panel using cached conflict data from a scan
+    pub fn update_with_cached_conflicts(
         &self,
-        mod_name: &str,
         mod_path: &PathBuf,
-        enabled_mods: &[(String, PathBuf)],
+        conflict_summary: Option<&ModConflictSummary>,
     ) {
-        self.imp().update_for_mod(mod_name, mod_path, enabled_mods);
+        self.imp().update_with_cached_conflicts(mod_path, conflict_summary);
     }
 
     /// Clear the panel (when no mod is selected)

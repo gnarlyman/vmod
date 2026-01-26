@@ -3,13 +3,15 @@ use gtk4::subclass::prelude::*;
 use gtk4::{
     glib, gio, Box, Button, ColumnView, ColumnViewColumn, Label, Orientation, ScrolledWindow,
     SignalListItemFactory, SingleSelection, CheckButton, SearchEntry, Paned, UriLauncher,
-    CustomFilter, FilterListModel, FilterChange,
+    CustomFilter, FilterListModel, FilterChange, ProgressBar,
 };
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
-use crate::mod_entry::{ModEntry, ModList, ModState, VirtualFileSystem, load_mods_json, generate_mods_json};
+use crate::mod_entry::{ModEntry, ModList, ModState, VirtualFileSystem, load_mods_json, DfmodCacheKey, ModConflictSummary, detect_all_conflicts};
 use crate::mods_json_view::ModsJsonView;
 use crate::conflict_panel::ConflictPanel;
 
@@ -27,6 +29,14 @@ pub struct ModListView {
     pub paned: RefCell<Option<Paned>>,
     pub settings: RefCell<Option<gio::Settings>>,
     pub conflict_panel: RefCell<Option<ConflictPanel>>,
+    // Conflict scanning state
+    pub scan_button: RefCell<Option<Button>>,
+    pub progress_box: RefCell<Option<Box>>,
+    pub progress_bar: RefCell<Option<ProgressBar>>,
+    pub progress_label: RefCell<Option<Label>>,
+    pub conflict_results: Rc<RefCell<HashMap<PathBuf, ModConflictSummary>>>,
+    pub dfmod_cache: Arc<Mutex<HashMap<DfmodCacheKey, Vec<String>>>>,
+    pub is_scanning: Rc<RefCell<bool>>,
 }
 
 impl Default for ModListView {
@@ -45,6 +55,13 @@ impl Default for ModListView {
             paned: RefCell::new(None),
             settings: RefCell::new(None),
             conflict_panel: RefCell::new(None),
+            scan_button: RefCell::new(None),
+            progress_box: RefCell::new(None),
+            progress_bar: RefCell::new(None),
+            progress_label: RefCell::new(None),
+            conflict_results: Rc::new(RefCell::new(HashMap::new())),
+            dfmod_cache: Arc::new(Mutex::new(HashMap::new())),
+            is_scanning: Rc::new(RefCell::new(false)),
         }
     }
 }
@@ -138,6 +155,7 @@ impl ObjectImpl for ModListView {
         self.add_name_column(&column_view);
         self.add_version_column(&column_view);
         self.add_order_column(&column_view);
+        self.add_conflicts_column(&column_view);
         self.add_nexus_column(&column_view);
 
         // Wrap in scrolled window
@@ -166,6 +184,14 @@ impl ObjectImpl for ModListView {
         let enable_all_button = Button::with_label("Enable All");
         let disable_all_button = Button::with_label("Disable All");
 
+        // Second separator
+        let separator2 = gtk4::Separator::new(Orientation::Vertical);
+        separator2.set_margin_start(6);
+        separator2.set_margin_end(6);
+
+        let scan_button = Button::with_label("Scan Conflicts");
+        self.scan_button.replace(Some(scan_button.clone()));
+
         button_box.append(&top_button);
         button_box.append(&up_button);
         button_box.append(&down_button);
@@ -173,8 +199,31 @@ impl ObjectImpl for ModListView {
         button_box.append(&separator);
         button_box.append(&enable_all_button);
         button_box.append(&disable_all_button);
+        button_box.append(&separator2);
+        button_box.append(&scan_button);
 
         left_box.append(&button_box);
+
+        // Progress bar (hidden by default)
+        let progress_box = Box::new(Orientation::Horizontal, 6);
+        progress_box.set_visible(false);
+        progress_box.set_margin_top(6);
+
+        let progress_bar = ProgressBar::new();
+        progress_bar.set_hexpand(true);
+        progress_bar.set_show_text(false);
+
+        let progress_label = Label::new(Some(""));
+        progress_label.set_xalign(0.0);
+
+        progress_box.append(&progress_bar);
+        progress_box.append(&progress_label);
+
+        left_box.append(&progress_box);
+
+        self.progress_box.replace(Some(progress_box.clone()));
+        self.progress_bar.replace(Some(progress_bar.clone()));
+        self.progress_label.replace(Some(progress_label.clone()));
 
         // Store references needed for button callbacks
         let model_ref = self.model.clone();
@@ -246,6 +295,28 @@ impl ObjectImpl for ModListView {
             Self::disable_all_mods_static(&model_clone, &profile_clone);
         });
 
+        // Connect scan button
+        let model_clone = model_ref.clone();
+        let is_scanning_clone = self.is_scanning.clone();
+        let conflict_results_clone = self.conflict_results.clone();
+        let dfmod_cache_clone = self.dfmod_cache.clone();
+        let progress_box_clone = progress_box.clone();
+        let progress_bar_clone = progress_bar.clone();
+        let progress_label_clone = progress_label.clone();
+        let scan_button_clone = scan_button.clone();
+        scan_button.connect_clicked(move |_| {
+            Self::start_conflict_scan(
+                &model_clone,
+                &is_scanning_clone,
+                &conflict_results_clone,
+                &dfmod_cache_clone,
+                &progress_box_clone,
+                &progress_bar_clone,
+                &progress_label_clone,
+                &scan_button_clone,
+            );
+        });
+
         paned.set_start_child(Some(&left_box));
 
         // Right side: Mods.json view
@@ -260,39 +331,18 @@ impl ObjectImpl for ModListView {
         conflict_panel.set_margin_top(6);
         self.conflict_panel.replace(Some(conflict_panel.clone()));
 
-        // Highlight related dfmods and update conflict panel when mod is selected
-        let mods_json_view_clone = mods_json_view.clone();
+        // Update conflict panel when mod is selected (uses cached conflict data)
         let conflict_panel_clone = conflict_panel.clone();
-        let model_clone = self.model.clone();
+        let conflict_results_for_selection = self.conflict_results.clone();
         selection_model.connect_selected_item_notify(move |sel| {
             if let Some(mod_entry) = sel.selected_item().and_then(|i| i.downcast::<ModEntry>().ok()) {
-                // Highlight related dfmods (use basic parsing - no asset extraction for speed)
-                if let Ok(dfmods) = crate::mod_entry::parse_dfmod_basic(&mod_entry.path()) {
-                    mods_json_view_clone.highlight_entries(&dfmods.iter().map(|d| d.file_name.clone()).collect::<Vec<_>>());
-                }
+                // Look up cached conflict data for this mod
+                let mod_path = mod_entry.path();
+                let results = conflict_results_for_selection.borrow();
+                let summary = results.get(&mod_path);
 
-                // Update conflict panel
-                // Collect all enabled mods for conflict detection
-                let mut enabled_mods: Vec<(String, PathBuf)> = Vec::new();
-                if let Some(model) = model_clone.borrow().as_ref() {
-                    for i in 0..model.n_items() {
-                        if let Some(item) = model.item(i) {
-                            if let Ok(entry) = item.downcast::<ModEntry>() {
-                                if entry.enabled() {
-                                    enabled_mods.push((entry.name(), entry.path()));
-                                }
-                            }
-                        }
-                    }
-                }
-
-                conflict_panel_clone.update_for_mod(
-                    &mod_entry.name(),
-                    &mod_entry.path(),
-                    &enabled_mods,
-                );
+                conflict_panel_clone.update_with_cached_conflicts(&mod_path, summary);
             } else {
-                mods_json_view_clone.clear_highlights();
                 conflict_panel_clone.clear();
             }
         });
@@ -372,8 +422,8 @@ impl ModListView {
                 .and_downcast::<CheckButton>()
                 .expect("Child must be CheckButton");
 
-            // Bind the enabled property
-            mod_entry
+            // Bind the enabled property and store the binding
+            let binding = mod_entry
                 .bind_property("enabled", &check_button, "active")
                 .bidirectional()
                 .sync_create()
@@ -382,10 +432,38 @@ impl ModListView {
             // Connect to toggled signal to save state
             let model_clone = model_ref.clone();
             let profile_name_clone = profile_name_ref.clone();
-            check_button.connect_toggled(move |_btn| {
+            let handler_id = check_button.connect_toggled(move |_btn| {
                 // Save mod state (VFS rebuild happens on Apply button)
                 Self::save_mod_state_static(&model_clone, &profile_name_clone);
             });
+
+            // Store binding and handler for cleanup in unbind
+            unsafe {
+                list_item.set_data("binding", binding);
+                list_item.set_data("handler-id", handler_id);
+            }
+        });
+
+        // Unbind: Clean up bindings and signal handlers
+        factory.connect_unbind(move |_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>()
+                .expect("Item must be ListItem");
+
+            // Unbind the property binding
+            unsafe {
+                if let Some(binding) = list_item.steal_data::<glib::Binding>("binding") {
+                    binding.unbind();
+                }
+            }
+
+            // Disconnect the signal handler
+            if let Some(check_button) = list_item.child().and_downcast::<CheckButton>() {
+                unsafe {
+                    if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("handler-id") {
+                        check_button.disconnect(handler_id);
+                    }
+                }
+            }
         });
 
         let column = ColumnViewColumn::new(Some("Enabled"), Some(factory));
@@ -418,10 +496,25 @@ impl ModListView {
                 .and_downcast::<Label>()
                 .expect("Child must be Label");
 
-            mod_entry
+            let binding = mod_entry
                 .bind_property("name", &label, "label")
                 .sync_create()
                 .build();
+
+            unsafe {
+                list_item.set_data("name-binding", binding);
+            }
+        });
+
+        factory.connect_unbind(move |_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>()
+                .expect("Item must be ListItem");
+
+            unsafe {
+                if let Some(binding) = list_item.steal_data::<glib::Binding>("name-binding") {
+                    binding.unbind();
+                }
+            }
         });
 
         let column = ColumnViewColumn::new(Some("Mod Name"), Some(factory));
@@ -454,10 +547,25 @@ impl ModListView {
                 .and_downcast::<Label>()
                 .expect("Child must be Label");
 
-            mod_entry
+            let binding = mod_entry
                 .bind_property("version", &label, "label")
                 .sync_create()
                 .build();
+
+            unsafe {
+                list_item.set_data("version-binding", binding);
+            }
+        });
+
+        factory.connect_unbind(move |_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>()
+                .expect("Item must be ListItem");
+
+            unsafe {
+                if let Some(binding) = list_item.steal_data::<glib::Binding>("version-binding") {
+                    binding.unbind();
+                }
+            }
         });
 
         let column = ColumnViewColumn::new(Some("Version"), Some(factory));
@@ -495,16 +603,109 @@ impl ModListView {
 
             // Update when order property changes
             let label_clone = label.clone();
-            mod_entry.connect_notify_local(
+            let handler_id = mod_entry.connect_notify_local(
                 Some("order"),
                 move |entry, _| {
                     label_clone.set_text(&entry.order().to_string());
                 },
             );
+
+            // Store handler for cleanup
+            unsafe {
+                list_item.set_data("order-handler-id", handler_id);
+            }
+        });
+
+        factory.connect_unbind(move |_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>()
+                .expect("Item must be ListItem");
+
+            if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
+                unsafe {
+                    if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("order-handler-id") {
+                        mod_entry.disconnect(handler_id);
+                    }
+                }
+            }
         });
 
         let column = ColumnViewColumn::new(Some("Order"), Some(factory));
         column.set_fixed_width(80);
+        column_view.append_column(&column);
+    }
+
+    fn add_conflicts_column(&self, column_view: &ColumnView) {
+        let factory = SignalListItemFactory::new();
+
+        factory.connect_setup(move |_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>()
+                .expect("Item must be ListItem");
+            let label = Label::new(Some("-"));
+            label.set_xalign(0.5);
+            list_item.set_child(Some(&label));
+        });
+
+        factory.connect_bind(move |_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>()
+                .expect("Item must be ListItem");
+
+            let mod_entry = list_item
+                .item()
+                .and_downcast::<ModEntry>()
+                .expect("Item must be ModEntry");
+
+            let label = list_item
+                .child()
+                .and_downcast::<Label>()
+                .expect("Child must be Label");
+
+            // Initial value
+            let count = mod_entry.conflict_count();
+            if count > 0 {
+                label.set_text(&count.to_string());
+                label.add_css_class("warning");
+            } else {
+                label.set_text("-");
+                label.remove_css_class("warning");
+            }
+
+            // Update when conflict_count property changes
+            let label_clone = label.clone();
+            let handler_id = mod_entry.connect_notify_local(
+                Some("conflict-count"),
+                move |entry, _| {
+                    let count = entry.conflict_count();
+                    if count > 0 {
+                        label_clone.set_text(&count.to_string());
+                        label_clone.add_css_class("warning");
+                    } else {
+                        label_clone.set_text("-");
+                        label_clone.remove_css_class("warning");
+                    }
+                },
+            );
+
+            // Store handler for cleanup
+            unsafe {
+                list_item.set_data("conflict-handler-id", handler_id);
+            }
+        });
+
+        factory.connect_unbind(move |_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>()
+                .expect("Item must be ListItem");
+
+            if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
+                unsafe {
+                    if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("conflict-handler-id") {
+                        mod_entry.disconnect(handler_id);
+                    }
+                }
+            }
+        });
+
+        let column = ColumnViewColumn::new(Some("⚠"), Some(factory));
+        column.set_fixed_width(50);
         column_view.append_column(&column);
     }
 
@@ -1200,4 +1401,158 @@ impl ModListView {
 
         Ok(())
     }
+
+    /// Start async conflict scanning on a background thread
+    fn start_conflict_scan(
+        model: &RefCell<Option<gio::ListStore>>,
+        is_scanning: &Rc<RefCell<bool>>,
+        conflict_results: &Rc<RefCell<HashMap<PathBuf, ModConflictSummary>>>,
+        dfmod_cache: &Arc<Mutex<HashMap<DfmodCacheKey, Vec<String>>>>,
+        progress_box: &Box,
+        progress_bar: &ProgressBar,
+        progress_label: &Label,
+        scan_button: &Button,
+    ) {
+        // Check if already scanning
+        if *is_scanning.borrow() {
+            return;
+        }
+        *is_scanning.borrow_mut() = true;
+
+        // Collect enabled mods
+        let mut enabled_mods: Vec<(String, PathBuf)> = Vec::new();
+        if let Some(model_store) = model.borrow().as_ref() {
+            for i in 0..model_store.n_items() {
+                if let Some(item) = model_store.item(i) {
+                    if let Ok(entry) = item.downcast::<ModEntry>() {
+                        if entry.enabled() {
+                            enabled_mods.push((entry.name(), entry.path()));
+                        }
+                    }
+                }
+            }
+        }
+
+        if enabled_mods.is_empty() {
+            *is_scanning.borrow_mut() = false;
+            return;
+        }
+
+        // Show progress UI and disable scan button
+        progress_box.set_visible(true);
+        scan_button.set_sensitive(false);
+        progress_bar.set_fraction(0.0);
+        progress_label.set_text("Starting scan...");
+
+        // Clone cache for thread
+        let cache_clone = dfmod_cache.clone();
+
+        // Shared state for progress
+        let progress_state = Arc::new(Mutex::new(ScanProgressState {
+            current: 0,
+            total: enabled_mods.len(),
+            current_mod: String::new(),
+            completed: false,
+            results: None,
+        }));
+
+        let progress_state_thread = progress_state.clone();
+
+        // Spawn background thread
+        std::thread::spawn(move || {
+            // Get a mutable copy of the cache
+            let mut local_cache = {
+                let guard = cache_clone.lock().unwrap();
+                guard.clone()
+            };
+
+            let results = detect_all_conflicts(
+                &enabled_mods,
+                &mut local_cache,
+                |mod_name, current, total| {
+                    let mut state = progress_state_thread.lock().unwrap();
+                    state.current = current;
+                    state.total = total;
+                    state.current_mod = mod_name;
+                },
+            );
+
+            // Update the shared cache with any new entries
+            {
+                let mut guard = cache_clone.lock().unwrap();
+                for (key, value) in local_cache {
+                    guard.entry(key).or_insert(value);
+                }
+            }
+
+            // Mark as completed
+            let mut state = progress_state_thread.lock().unwrap();
+            state.completed = true;
+            state.results = Some(results);
+        });
+
+        // Poll progress from main thread
+        let is_scanning_clone = is_scanning.clone();
+        let conflict_results_clone = conflict_results.clone();
+        let model_clone = model.borrow().clone();
+        let progress_box_clone = progress_box.clone();
+        let progress_bar_clone = progress_bar.clone();
+        let progress_label_clone = progress_label.clone();
+        let scan_button_clone = scan_button.clone();
+
+        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            let state = progress_state.lock().unwrap();
+
+            if state.completed {
+                // Get results
+                if let Some(ref results) = state.results {
+                    // Update conflict counts on ModEntry objects
+                    if let Some(ref model_store) = model_clone {
+                        for i in 0..model_store.n_items() {
+                            if let Some(item) = model_store.item(i) {
+                                if let Ok(entry) = item.downcast::<ModEntry>() {
+                                    let path = entry.path();
+                                    let count = results
+                                        .get(&path)
+                                        .map(|s| s.total_conflict_count as u32)
+                                        .unwrap_or(0);
+                                    entry.set_conflict_count(count);
+                                }
+                            }
+                        }
+                    }
+
+                    // Store results
+                    *conflict_results_clone.borrow_mut() = results.clone();
+                }
+
+                // Hide progress UI and re-enable scan button
+                progress_box_clone.set_visible(false);
+                scan_button_clone.set_sensitive(true);
+                *is_scanning_clone.borrow_mut() = false;
+
+                return glib::ControlFlow::Break;
+            }
+
+            // Update progress UI
+            let fraction = if state.total > 0 {
+                state.current as f64 / state.total as f64
+            } else {
+                0.0
+            };
+            progress_bar_clone.set_fraction(fraction);
+            progress_label_clone.set_text(&format!("{}/{} {}", state.current, state.total, state.current_mod));
+
+            glib::ControlFlow::Continue
+        });
+    }
+}
+
+/// Progress state shared between background thread and main thread
+struct ScanProgressState {
+    current: usize,
+    total: usize,
+    current_mod: String,
+    completed: bool,
+    results: Option<HashMap<PathBuf, ModConflictSummary>>,
 }

@@ -1,6 +1,47 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+/// Cache key for dfmod parsing results - tracks file identity by path, size, and mtime
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct DfmodCacheKey {
+    pub path: PathBuf,
+    pub size: u64,
+    pub mtime: SystemTime,
+}
+
+impl DfmodCacheKey {
+    /// Create a cache key from a file path by reading its metadata
+    pub fn from_path(path: &Path) -> Option<Self> {
+        let metadata = std::fs::metadata(path).ok()?;
+        Some(Self {
+            path: path.to_path_buf(),
+            size: metadata.len(),
+            mtime: metadata.modified().ok()?,
+        })
+    }
+}
+
+/// Extract dfmod assets with caching support
+/// If the dfmod has already been parsed and its file hasn't changed, return cached results
+pub fn extract_dfmod_assets_cached(
+    dfmod_path: &Path,
+    cache: &mut HashMap<DfmodCacheKey, Vec<String>>,
+) -> Vec<String> {
+    if let Some(key) = DfmodCacheKey::from_path(dfmod_path) {
+        if let Some(cached) = cache.get(&key) {
+            return cached.clone();
+        }
+        let assets = extract_dfmod_assets(dfmod_path);
+        cache.insert(key, assets.clone());
+        assets
+    } else {
+        // If we can't get metadata, just parse without caching
+        extract_dfmod_assets(dfmod_path)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DfmodInfo {
@@ -29,6 +70,23 @@ fn capitalize_words(s: &str) -> String {
 /// Extract asset paths from a dfmod file (Unity asset bundle)
 /// Returns a list of asset paths contained in the bundle
 pub fn extract_dfmod_assets(dfmod_path: &Path) -> Vec<String> {
+    // Use catch_unwind to handle panics from unsupported Unity formats
+    let path = dfmod_path.to_path_buf();
+    let result = std::panic::catch_unwind(move || {
+        extract_dfmod_assets_inner(&path)
+    });
+
+    match result {
+        Ok(paths) => paths,
+        Err(_) => {
+            // Silently return empty for unsupported formats
+            Vec::new()
+        }
+    }
+}
+
+/// Inner function for asset extraction (may panic on unsupported formats)
+fn extract_dfmod_assets_inner(dfmod_path: &Path) -> Vec<String> {
     use io_unity::unityfs::UnityFS;
 
     let file = match File::open(dfmod_path) {

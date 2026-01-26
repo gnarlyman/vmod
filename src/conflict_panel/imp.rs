@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::mod_entry::{TreeItem, detect_conflicts, get_children_at_path, parse_dfmod};
+use crate::mod_entry::{TreeItem, get_children_at_path, ModConflictSummary};
 
 pub struct ConflictPanel {
     pub notebook: RefCell<Option<Notebook>>,
@@ -320,67 +320,72 @@ impl WidgetImpl for ConflictPanel {}
 impl BoxImpl for ConflictPanel {}
 
 impl ConflictPanel {
-    /// Update the panel for the selected mod
-    pub fn update_for_mod(
+    /// Update the panel using cached conflict data from a scan
+    pub fn update_with_cached_conflicts(
         &self,
-        mod_name: &str,
         mod_path: &PathBuf,
-        enabled_mods: &[(String, PathBuf)],
+        conflict_summary: Option<&ModConflictSummary>,
     ) {
         // Store mod path for tree model child creation
         self.current_mod_path.replace(Some(mod_path.clone()));
 
-        // Update conflicts tab
-        self.update_conflicts(mod_name, mod_path, enabled_mods);
+        // Update conflicts tab with cached data
+        self.update_conflicts_from_cache(conflict_summary);
 
-        // Update files tab
+        // Update files tab (just shows folder structure, no dfmod parsing)
         self.update_files(mod_path);
     }
 
-    /// Update the conflicts tab
-    fn update_conflicts(
-        &self,
-        mod_name: &str,
-        mod_path: &PathBuf,
-        enabled_mods: &[(String, PathBuf)],
-    ) {
-        let conflicts = detect_conflicts(mod_path, mod_name, enabled_mods);
-
+    /// Update the conflicts tab using cached conflict summary
+    fn update_conflicts_from_cache(&self, conflict_summary: Option<&ModConflictSummary>) {
         // Store conflict data for the TreeListModel callback
         {
             let mut data = self.conflict_data.borrow_mut();
             data.clear();
-            for conflict in &conflicts {
-                data.insert(
-                    conflict.other_mod_name.clone(),
-                    conflict.conflicting_files.clone(),
-                );
+            if let Some(summary) = conflict_summary {
+                for conflict in &summary.conflicts {
+                    data.insert(
+                        conflict.other_mod_name.clone(),
+                        conflict.conflicting_files.clone(),
+                    );
+                }
             }
         }
 
         if let Some(model) = self.conflicts_model.borrow().as_ref() {
             model.remove_all();
 
-            if conflicts.is_empty() {
-                // No conflicts - show a message
-                let no_conflicts = TreeItem::new("No conflicts detected", "", false, 2);
-                model.append(&no_conflicts);
-            } else {
-                // Add only mod roots - children are provided by TreeListModel callback
-                for conflict in &conflicts {
-                    let mod_item = TreeItem::new_mod_root(
-                        &conflict.other_mod_name,
-                        conflict.other_mod_path.to_str().unwrap_or(""),
-                        conflict.conflicting_files.len() as u32,
-                    );
-                    model.append(&mod_item);
+            match conflict_summary {
+                None => {
+                    // No scan done yet
+                    let no_scan = TreeItem::new("Run 'Scan Conflicts' to detect conflicts", "", false, 2);
+                    model.append(&no_scan);
+                }
+                Some(summary) if summary.conflicts.is_empty() => {
+                    // Scan done, no conflicts
+                    let no_conflicts = TreeItem::new("No conflicts detected", "", false, 2);
+                    model.append(&no_conflicts);
+                }
+                Some(summary) => {
+                    // Add only mod roots - children are provided by TreeListModel callback
+                    for conflict in &summary.conflicts {
+                        let mod_item = TreeItem::new_mod_root(
+                            &conflict.other_mod_name,
+                            conflict.other_mod_path.to_str().unwrap_or(""),
+                            conflict.conflicting_files.len() as u32,
+                        );
+                        model.append(&mod_item);
+                    }
                 }
             }
         }
 
         // Update tab label with count
         if let Some(notebook) = self.notebook.borrow().as_ref() {
-            let total_conflicts: usize = conflicts.iter().map(|c| c.conflicting_files.len()).sum();
+            let total_conflicts = conflict_summary
+                .map(|s| s.total_conflict_count)
+                .unwrap_or(0);
+
             let label_text = if total_conflicts > 0 {
                 format!("Conflicts ({})", total_conflicts)
             } else {
@@ -395,7 +400,7 @@ impl ConflictPanel {
         }
     }
 
-    /// Update the files tab
+    /// Update the files tab (shows folder structure only, no dfmod parsing)
     fn update_files(&self, mod_path: &PathBuf) {
         // Clear dfmod assets from previous selection
         self.dfmod_assets.borrow_mut().clear();
@@ -406,40 +411,19 @@ impl ConflictPanel {
             // Get top-level children (folders in mod root)
             let children = get_children_at_path(mod_path, "");
 
-            let mut has_items = false;
-
-            // Add loose files/folders first
-            for (name, rel_path, is_dir) in children {
-                let item = if is_dir {
-                    TreeItem::new_folder(&name, &rel_path)
-                } else {
-                    TreeItem::new_file(&name, &rel_path)
-                };
-                model.append(&item);
-                has_items = true;
-            }
-
-            // Parse dfmod files and add them (with full asset extraction)
-            if let Ok(dfmods) = parse_dfmod(mod_path) {
-                for dfmod in dfmods {
-                    let asset_count = dfmod.asset_paths.len() as u32;
-
-                    // Store assets for the tree model callback
-                    self.dfmod_assets
-                        .borrow_mut()
-                        .insert(dfmod.file_name.clone(), dfmod.asset_paths);
-
-                    // Add dfmod item to the tree
-                    let dfmod_display = format!("{}.dfmod", dfmod.file_name);
-                    let dfmod_item = TreeItem::new_dfmod(&dfmod_display, &dfmod.file_name, asset_count);
-                    model.append(&dfmod_item);
-                    has_items = true;
-                }
-            }
-
-            if !has_items {
+            if children.is_empty() {
                 let empty = TreeItem::new("No files found", "", false, 2);
                 model.append(&empty);
+            } else {
+                // Add loose files/folders
+                for (name, rel_path, is_dir) in children {
+                    let item = if is_dir {
+                        TreeItem::new_folder(&name, &rel_path)
+                    } else {
+                        TreeItem::new_file(&name, &rel_path)
+                    };
+                    model.append(&item);
+                }
             }
         }
     }

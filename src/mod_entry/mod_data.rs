@@ -78,6 +78,8 @@ mod imp {
         pub path: RefCell<PathBuf>,
         #[property(get, set)]
         pub nexus_id: RefCell<Option<String>>,
+        #[property(get, set)]
+        pub conflict_count: Cell<u32>,
     }
 
     #[glib::object_subclass]
@@ -108,6 +110,7 @@ impl ModEntry {
             .property("enabled", false)
             .property("order", order)
             .property("nexus-id", &nexus_id)
+            .property("conflict-count", 0u32)
             .build();
 
         obj.imp().path.replace(path);

@@ -2,6 +2,26 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::dfmod_parser::{extract_dfmod_assets_cached, DfmodCacheKey};
+
+/// Summary of conflicts for a single mod
+#[derive(Debug, Clone)]
+pub struct ModConflictSummary {
+    pub mod_path: PathBuf,
+    pub mod_name: String,
+    pub total_conflict_count: usize,
+    pub conflicts: Vec<ConflictInfo>,
+}
+
+/// Progress updates during conflict scanning
+#[derive(Debug, Clone)]
+pub enum ConflictScanProgress {
+    Started { total_mods: usize },
+    Processing { mod_name: String, current: usize, total: usize },
+    Completed { results: HashMap<PathBuf, ModConflictSummary> },
+    Error { message: String },
+}
+
 /// Information about a conflict with another mod
 #[derive(Debug, Clone)]
 pub struct ConflictInfo {
@@ -65,6 +85,162 @@ fn enumerate_files_recursive(
             }
         }
     }
+}
+
+/// Normalize a dfmod asset path for conflict comparison
+/// Unity asset paths like "assets/game/mods/mobs/foo.png" become "mobs/foo.png"
+fn normalize_dfmod_asset_path(asset_path: &str) -> Option<String> {
+    let path = asset_path.trim();
+
+    // Skip non-content files (scripts, metadata, dfmod files themselves)
+    let dominated_extensions = [".cs", ".dll", ".json", ".dfmod", ".txt", ".xml", ".meta"];
+    let lower_path = path.to_lowercase();
+    for ext in &dominated_extensions {
+        if lower_path.ends_with(ext) {
+            return None;
+        }
+    }
+
+    // Common Unity prefixes to strip (case-insensitive)
+    let prefixes_to_strip = [
+        "assets/streamingassets/",
+        "assets/game/mods/",
+        "assets/mods/",
+        "assets/",
+    ];
+
+    let lower = path.to_lowercase();
+
+    for prefix in &prefixes_to_strip {
+        if lower.starts_with(prefix) {
+            let prefix_len = prefix.len();
+            let stripped = &path[prefix_len..];
+            if !stripped.is_empty() && stripped.contains('/') {
+                // Has a subfolder - this is content
+                return Some(stripped.to_string());
+            } else if !stripped.is_empty() {
+                // Just a filename at the root - still valid
+                return Some(stripped.to_string());
+            }
+        }
+    }
+
+    // If path has content file extensions, keep it as-is
+    let content_extensions = [".png", ".jpg", ".jpeg", ".webm", ".ogg", ".wav", ".mp3",
+                              ".prefab", ".asset", ".mat", ".shader", ".img"];
+    for ext in &content_extensions {
+        if lower_path.ends_with(ext) {
+            return Some(path.to_string());
+        }
+    }
+
+    None
+}
+
+/// Enumerate all files in a mod folder including dfmod assets (with caching)
+/// Returns a map of relative path -> source path (loose file path or dfmod path)
+pub fn enumerate_mod_files_with_dfmod(
+    mod_path: &Path,
+    dfmod_cache: &mut HashMap<DfmodCacheKey, Vec<String>>,
+) -> HashMap<String, PathBuf> {
+    let mut files = enumerate_mod_files(mod_path); // Loose files
+
+    // Add dfmod assets
+    let mods_folder = mod_path.join("Mods");
+    if mods_folder.exists() {
+        if let Ok(entries) = fs::read_dir(&mods_folder) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map_or(false, |e| e == "dfmod") {
+                    let assets = extract_dfmod_assets_cached(&path, dfmod_cache);
+                    for asset in assets {
+                        // Normalize the asset path to match loose file format
+                        if let Some(normalized) = normalize_dfmod_asset_path(&asset) {
+                            files.insert(normalized, path.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    files
+}
+
+/// Detect conflicts for all enabled mods (batch operation)
+/// Returns a map of mod path -> conflict summary
+pub fn detect_all_conflicts<F>(
+    enabled_mods: &[(String, PathBuf)],
+    dfmod_cache: &mut HashMap<DfmodCacheKey, Vec<String>>,
+    progress_callback: F,
+) -> HashMap<PathBuf, ModConflictSummary>
+where
+    F: Fn(String, usize, usize),
+{
+    let total = enabled_mods.len();
+    let mut results: HashMap<PathBuf, ModConflictSummary> = HashMap::new();
+
+    // First pass: enumerate all files for all mods
+    let mut mod_files: HashMap<PathBuf, HashMap<String, PathBuf>> = HashMap::new();
+    for (idx, (mod_name, mod_path)) in enabled_mods.iter().enumerate() {
+        progress_callback(mod_name.clone(), idx + 1, total);
+        let files = enumerate_mod_files_with_dfmod(mod_path, dfmod_cache);
+        mod_files.insert(mod_path.clone(), files);
+    }
+
+    // Second pass: find conflicts for each mod
+    for (mod_name, mod_path) in enabled_mods.iter() {
+        let mut conflicts: Vec<ConflictInfo> = Vec::new();
+        let selected_files = match mod_files.get(mod_path) {
+            Some(f) => f,
+            None => continue,
+        };
+
+        // Compare against all other mods
+        for (other_name, other_path) in enabled_mods.iter() {
+            if other_path == mod_path {
+                continue;
+            }
+
+            let other_files = match mod_files.get(other_path) {
+                Some(f) => f,
+                None => continue,
+            };
+
+            // Find intersection of relative paths
+            let mut conflicting: Vec<String> = selected_files
+                .keys()
+                .filter(|key| other_files.contains_key(*key))
+                .cloned()
+                .collect();
+
+            if !conflicting.is_empty() {
+                conflicting.sort();
+                conflicts.push(ConflictInfo {
+                    other_mod_name: other_name.clone(),
+                    other_mod_path: other_path.clone(),
+                    conflicting_files: conflicting,
+                });
+            }
+        }
+
+        // Sort conflicts by mod name
+        conflicts.sort_by(|a, b| a.other_mod_name.cmp(&b.other_mod_name));
+
+        let total_conflict_count: usize = conflicts.iter().map(|c| c.conflicting_files.len()).sum();
+
+        results.insert(
+            mod_path.clone(),
+            ModConflictSummary {
+                mod_path: mod_path.clone(),
+                mod_name: mod_name.clone(),
+                total_conflict_count,
+                conflicts,
+            },
+        );
+    }
+
+    results
 }
 
 /// Detect conflicts between the selected mod and other enabled mods
@@ -314,5 +490,43 @@ mod tests {
 
         // Both should be directories
         assert!(children.iter().all(|(_, _, is_dir)| *is_dir));
+    }
+
+    #[test]
+    fn test_normalize_dfmod_asset_path() {
+        // Unity asset paths should be normalized
+        assert_eq!(
+            normalize_dfmod_asset_path("assets/game/mods/mobs/490_25-1.png"),
+            Some("mobs/490_25-1.png".to_string())
+        );
+        assert_eq!(
+            normalize_dfmod_asset_path("Assets/Game/Mods/backgrounds/foo.png"),
+            Some("backgrounds/foo.png".to_string())
+        );
+        assert_eq!(
+            normalize_dfmod_asset_path("assets/streamingassets/Textures/bar.png"),
+            Some("Textures/bar.png".to_string())
+        );
+
+        // Content files without prefix should be kept
+        assert_eq!(
+            normalize_dfmod_asset_path("Textures/test.png"),
+            Some("Textures/test.png".to_string())
+        );
+
+        // Scripts and metadata should be filtered out
+        assert_eq!(normalize_dfmod_asset_path("MyMod.cs"), None);
+        assert_eq!(normalize_dfmod_asset_path("assets/game/mods/mod.dfmod.json"), None);
+        assert_eq!(normalize_dfmod_asset_path("test.dfmod"), None);
+
+        // Video and audio content should be kept
+        assert_eq!(
+            normalize_dfmod_asset_path("Assets/Game/Mods/- CINEMATICS/ANIM0001.webm"),
+            Some("- CINEMATICS/ANIM0001.webm".to_string())
+        );
+        assert_eq!(
+            normalize_dfmod_asset_path("assets/game/mods/- music/song_02.ogg"),
+            Some("- music/song_02.ogg".to_string())
+        );
     }
 }
