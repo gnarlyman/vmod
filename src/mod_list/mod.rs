@@ -40,6 +40,11 @@ impl ModListView {
     pub fn move_mod_down(&self, mod_entry: &ModEntry) {
         self.imp().move_mod_down(mod_entry);
     }
+
+    /// Reload mods using stored paths (used after backup restore)
+    pub fn reload(&self) {
+        self.imp().reload();
+    }
 }
 
 impl Default for ModListView {

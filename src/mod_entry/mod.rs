@@ -9,6 +9,7 @@ pub mod conflict_detector;
 pub mod section;
 pub mod list_row;
 pub mod sorting_rules;
+pub mod backup;
 
 pub use mod_data::{ModEntry, ModList};
 pub use mod_state::ModState;
@@ -21,3 +22,4 @@ pub use conflict_detector::{ConflictInfo, ModConflictSummary, ConflictScanProgre
 pub use section::{SectionHeader, SectionData, SectionsConfig};
 pub use list_row::ListRow;
 pub use sorting_rules::{SortingRules, SortingRule};
+pub use backup::{BackupManager, BackupInfo};
