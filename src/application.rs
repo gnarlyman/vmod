@@ -88,7 +88,30 @@ impl VmodApplication {
             })
             .build();
 
-        self.app.add_action_entries([quit, preferences]);
+        let open_profile_folder = gio::ActionEntry::builder("open_profile_folder")
+            .activate(move |_app: &Application, _, _| {
+                if let Some(config_dir) = dirs::config_dir() {
+                    let profile_folder = config_dir.join("vmod");
+                    if let Err(e) = open::that(&profile_folder) {
+                        eprintln!("Failed to open profile folder: {}", e);
+                    }
+                }
+            })
+            .build();
+
+        let open_game_folder = gio::ActionEntry::builder("open_game_folder")
+            .activate(move |_app: &Application, _, _| {
+                if let Ok(profile_list) = crate::profile::profile_data::ProfileList::load() {
+                    if let Some(active_profile) = profile_list.get_active_profile() {
+                        if let Err(e) = open::that(&active_profile.game_path) {
+                            eprintln!("Failed to open game folder: {}", e);
+                        }
+                    }
+                }
+            })
+            .build();
+
+        self.app.add_action_entries([quit, preferences, open_profile_folder, open_game_folder]);
 
         // Set up keyboard accelerators
         self.app.set_accels_for_action("app.quit", &["<Ctrl>Q"]);

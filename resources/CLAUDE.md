@@ -13,6 +13,8 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #1988 | 8:25 PM | ✅ | UI Layout Changes Committed and Pushed to Repository | ~373 |
+| #1982 | 8:22 PM | 🔵 | UI Layout Structure for Mod List Filter Row Identified | ~384 |
 | #1692 | 4:01 PM | 🔴 | Fixed dfmod highlight to use inset box-shadow instead of background-color | ~386 |
 | #1691 | 4:00 PM | 🔴 | Simplified highlight to use inset box-shadow only, removing all background colors | ~345 |
 | #1690 | " | ✅ | CSS file cleared - all highlight styling removed | ~251 |
