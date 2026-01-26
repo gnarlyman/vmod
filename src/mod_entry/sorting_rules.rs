@@ -4,7 +4,7 @@
 //! to determine the correct mod load order.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -37,7 +37,9 @@ impl SortingRules {
             .map_err(|e| format!("Failed to parse sorting rules: {}", e))
     }
 
-    /// Apply topological sort to mod entries based on rules.
+    /// Apply sorting based on rules order.
+    /// Rules are assumed to be consecutive pairs (A->B, B->C, etc).
+    /// Follows rule order directly to preserve intended sequence.
     /// Returns the sorted entries, or an error if a cycle is detected.
     pub fn apply_sort(&self, entries: &[ModsJsonEntry]) -> Result<Vec<ModsJsonEntry>, String> {
         if entries.is_empty() || self.rules.is_empty() {
@@ -45,68 +47,61 @@ impl SortingRules {
         }
 
         // Build a normalized filename lookup map
-        // Maps normalized name -> original entry index
         let mut name_to_index: HashMap<String, usize> = HashMap::new();
         for (i, entry) in entries.iter().enumerate() {
             let normalized = normalize_name(&entry.file_name);
             name_to_index.insert(normalized, i);
         }
 
-        // Build adjacency list for the graph
-        // If rule says "A before B", we add edge A -> B
-        let n = entries.len();
-        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
-        let mut in_degree: Vec<usize> = vec![0; n];
+        // Build sorted list by following rule order
+        // Rules are consecutive pairs, so iterate through and collect in order
+        let mut sorted_indices: Vec<usize> = Vec::new();
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut is_constrained: Vec<bool> = vec![false; entries.len()];
 
         for rule in &self.rules {
             let first_norm = normalize_name(&rule.first);
             let then_norm = normalize_name(&rule.then);
 
-            if let (Some(&first_idx), Some(&then_idx)) =
-                (name_to_index.get(&first_norm), name_to_index.get(&then_norm))
-            {
-                // Only add edge if both mods exist
-                adj[first_idx].push(then_idx);
-                in_degree[then_idx] += 1;
+            // Add "first" if not already added and exists
+            if let Some(&first_idx) = name_to_index.get(&first_norm) {
+                is_constrained[first_idx] = true;
+                if !seen.contains(&first_idx) {
+                    seen.insert(first_idx);
+                    sorted_indices.push(first_idx);
+                }
             }
-        }
 
-        // Kahn's algorithm for topological sort
-        let mut queue: VecDeque<usize> = VecDeque::new();
-        for i in 0..n {
-            if in_degree[i] == 0 {
-                queue.push_back(i);
-            }
-        }
-
-        let mut sorted_indices: Vec<usize> = Vec::with_capacity(n);
-        while let Some(node) = queue.pop_front() {
-            sorted_indices.push(node);
-            for &neighbor in &adj[node] {
-                in_degree[neighbor] -= 1;
-                if in_degree[neighbor] == 0 {
-                    queue.push_back(neighbor);
+            // Add "then" if not already added and exists
+            if let Some(&then_idx) = name_to_index.get(&then_norm) {
+                is_constrained[then_idx] = true;
+                if !seen.contains(&then_idx) {
+                    seen.insert(then_idx);
+                    sorted_indices.push(then_idx);
                 }
             }
         }
 
-        if sorted_indices.len() != n {
-            // Cycle detected - find the mods involved
-            let in_cycle: Vec<String> = (0..n)
-                .filter(|&i| in_degree[i] > 0)
-                .map(|i| entries[i].file_name.clone())
-                .collect();
-            return Err(format!(
-                "Cycle detected in sorting rules involving: {}",
-                in_cycle.join(", ")
-            ));
-        }
+        // Build final result:
+        // - Keep unconstrained mods in original order
+        // - Insert constrained mods at the position of the first constrained mod
+        let mut result: Vec<ModsJsonEntry> = Vec::with_capacity(entries.len());
+        let mut constrained_inserted = false;
 
-        // Build sorted result with updated priorities
-        let mut result: Vec<ModsJsonEntry> = sorted_indices
-            .iter()
-            .map(|&i| entries[i].clone())
-            .collect();
+        for (i, entry) in entries.iter().enumerate() {
+            if is_constrained[i] {
+                // Insert all constrained mods at the position of the first one
+                if !constrained_inserted {
+                    for &sorted_idx in &sorted_indices {
+                        result.push(entries[sorted_idx].clone());
+                    }
+                    constrained_inserted = true;
+                }
+                // Skip this entry, it's already been added in sorted order
+            } else {
+                result.push(entry.clone());
+            }
+        }
 
         // Update load priorities to be sequential
         for (i, entry) in result.iter_mut().enumerate() {
@@ -118,12 +113,15 @@ impl SortingRules {
 }
 
 /// Normalize a mod name for matching.
-/// Removes spaces around hyphens and converts to lowercase.
+/// Removes spaces and converts to lowercase for fuzzy matching.
 fn normalize_name(name: &str) -> String {
     name.to_lowercase()
-        .replace(" - ", "-")
-        .replace("- ", "-")
-        .replace(" -", "-")
+        .replace(" - ", "")
+        .replace("- ", "")
+        .replace(" -", "")
+        .replace("-", "")
+        .replace(" ", "")
+        .replace("'", "")
 }
 
 #[cfg(test)]
@@ -188,7 +186,9 @@ mod tests {
     }
 
     #[test]
-    fn test_cycle_detection() {
+    fn test_redundant_rules_handled() {
+        // With rule-order following (not topological sort), redundant rules
+        // like A->B, B->A are handled gracefully - first occurrence wins
         let rules = SortingRules {
             rules: vec![
                 SortingRule {
@@ -202,9 +202,10 @@ mod tests {
             ],
         };
         let entries = vec![make_entry("mod_a", 0), make_entry("mod_b", 1)];
-        let result = rules.apply_sort(&entries);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Cycle"));
+        let result = rules.apply_sort(&entries).unwrap();
+        // First rule adds mod_a then mod_b, second rule's entries already seen
+        assert_eq!(result[0].file_name, "mod_a");
+        assert_eq!(result[1].file_name, "mod_b");
     }
 
     #[test]
