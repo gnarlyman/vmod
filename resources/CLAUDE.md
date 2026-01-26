@@ -8,4 +8,22 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #1106 | 8:26 PM | 🔵 | VMOD GTK4 UI Template Foundation | ~363 |
+
+### Jan 25, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #1692 | 4:01 PM | 🔴 | Fixed dfmod highlight to use inset box-shadow instead of background-color | ~386 |
+| #1691 | 4:00 PM | 🔴 | Simplified highlight to use inset box-shadow only, removing all background colors | ~345 |
+| #1690 | " | ✅ | CSS file cleared - all highlight styling removed | ~251 |
+| #1689 | 3:59 PM | ✅ | Removed highlight styling entirely from resources/style.css | ~276 |
+| #1688 | 3:57 PM | 🔴 | Changed highlight reset from background:none to background-color:unset for selected rows | ~367 |
+| #1687 | 3:56 PM | 🔴 | Fixed highlight styling using orange color with explicit selection reset | ~363 |
+| #1686 | 3:55 PM | 🔴 | Simplified highlight CSS to rely on default GTK selection styling | ~316 |
+| #1685 | 3:52 PM | 🔴 | Refined highlight styling with warm orange color and explicit selection override | ~350 |
+| #1684 | 3:51 PM | 🔴 | Changed highlight color to warm orange and removed :not(:selected) to fix element size issue | ~385 |
+| #1683 | 3:50 PM | 🔴 | Refined highlight styling to prevent interfering with default selection appearance | ~359 |
+| #1682 | 3:46 PM | 🔴 | Simplified highlight styling by removing border and selection overrides | ~321 |
+| #1681 | 3:45 PM | 🔴 | Replaced GTK theme variables with hardcoded colors for highlight styling | ~324 |
+| #1678 | 3:44 PM | 🔴 | Improved dfmod highlight styling to distinguish from selection state | ~368 |
 </claude-mem-context>
