@@ -109,11 +109,27 @@ impl ObjectImpl for ModListView {
         mod_folders_label.set_xalign(0.0);
         left_box.append(&mod_folders_label);
 
+        // Create filter row with search entry and action buttons
+        let filter_row = Box::new(Orientation::Horizontal, 6);
+
         // Create search entry
         let search_entry = SearchEntry::new();
         search_entry.set_placeholder_text(Some("Filter mods..."));
-        left_box.append(&search_entry);
+        search_entry.set_hexpand(true);
+        filter_row.append(&search_entry);
         self.search_entry.replace(Some(search_entry.clone()));
+
+        // Add Section button
+        let add_section_button = Button::with_label("+ Section");
+        add_section_button.set_tooltip_text(Some("Add a new collapsible section"));
+        filter_row.append(&add_section_button);
+
+        // Scan Conflicts button
+        let scan_button = Button::with_label("Scan Conflicts");
+        self.scan_button.replace(Some(scan_button.clone()));
+        filter_row.append(&scan_button);
+
+        left_box.append(&filter_row);
 
         // Create the ListStore to hold ModEntry and SectionHeader objects
         let model = gio::ListStore::new::<glib::Object>();
@@ -211,22 +227,6 @@ impl ObjectImpl for ModListView {
         let enable_all_button = Button::with_label("Enable All");
         let disable_all_button = Button::with_label("Disable All");
 
-        // Second separator
-        let separator2 = gtk4::Separator::new(Orientation::Vertical);
-        separator2.set_margin_start(6);
-        separator2.set_margin_end(6);
-
-        let scan_button = Button::with_label("Scan Conflicts");
-        self.scan_button.replace(Some(scan_button.clone()));
-
-        // Third separator
-        let separator3 = gtk4::Separator::new(Orientation::Vertical);
-        separator3.set_margin_start(6);
-        separator3.set_margin_end(6);
-
-        let add_section_button = Button::with_label("+ Section");
-        add_section_button.set_tooltip_text(Some("Add a new collapsible section"));
-
         button_box.append(&top_button);
         button_box.append(&up_button);
         button_box.append(&down_button);
@@ -234,10 +234,6 @@ impl ObjectImpl for ModListView {
         button_box.append(&separator);
         button_box.append(&enable_all_button);
         button_box.append(&disable_all_button);
-        button_box.append(&separator2);
-        button_box.append(&scan_button);
-        button_box.append(&separator3);
-        button_box.append(&add_section_button);
 
         left_box.append(&button_box);
 
