@@ -276,9 +276,15 @@ impl ObjectImpl for ModListView {
         let sections_config_clone = sections_config_ref.clone();
         let profile_path_clone = profile_path_ref.clone();
         top_button.connect_clicked(move |_| {
-            let position = selection_clone.selected();
-            if position != gtk4::INVALID_LIST_POSITION {
-                Self::move_mod_to_top_static(&model_clone, position, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
+            // Get selected item and find its position in the underlying model (not filtered)
+            if let Some(item) = selection_clone.selected_item() {
+                let position = {
+                    let model_borrow = model_clone.borrow();
+                    model_borrow.as_ref().and_then(|m| Self::find_item_position_in_model(m, &item))
+                };
+                if let Some(pos) = position {
+                    Self::move_mod_to_top_static(&model_clone, pos, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
+                }
             }
         });
 
@@ -289,9 +295,14 @@ impl ObjectImpl for ModListView {
         let sections_config_clone = sections_config_ref.clone();
         let profile_path_clone = profile_path_ref.clone();
         up_button.connect_clicked(move |_| {
-            let position = selection_clone.selected();
-            if position != gtk4::INVALID_LIST_POSITION {
-                Self::move_mod_up_static(&model_clone, position, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
+            if let Some(item) = selection_clone.selected_item() {
+                let position = {
+                    let model_borrow = model_clone.borrow();
+                    model_borrow.as_ref().and_then(|m| Self::find_item_position_in_model(m, &item))
+                };
+                if let Some(pos) = position {
+                    Self::move_mod_up_static(&model_clone, pos, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
+                }
             }
         });
 
@@ -302,9 +313,14 @@ impl ObjectImpl for ModListView {
         let sections_config_clone = sections_config_ref.clone();
         let profile_path_clone = profile_path_ref.clone();
         down_button.connect_clicked(move |_| {
-            let position = selection_clone.selected();
-            if position != gtk4::INVALID_LIST_POSITION {
-                Self::move_mod_down_static(&model_clone, position, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
+            if let Some(item) = selection_clone.selected_item() {
+                let position = {
+                    let model_borrow = model_clone.borrow();
+                    model_borrow.as_ref().and_then(|m| Self::find_item_position_in_model(m, &item))
+                };
+                if let Some(pos) = position {
+                    Self::move_mod_down_static(&model_clone, pos, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
+                }
             }
         });
 
@@ -315,9 +331,15 @@ impl ObjectImpl for ModListView {
         let sections_config_clone = sections_config_ref.clone();
         let profile_path_clone = profile_path_ref.clone();
         bottom_button.connect_clicked(move |_| {
-            let position = selection_clone.selected();
-            if position != gtk4::INVALID_LIST_POSITION {
-                Self::move_mod_to_bottom_static(&model_clone, position, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
+            // Get selected item and find its position in the underlying model (not filtered)
+            if let Some(item) = selection_clone.selected_item() {
+                let position = {
+                    let model_borrow = model_clone.borrow();
+                    model_borrow.as_ref().and_then(|m| Self::find_item_position_in_model(m, &item))
+                };
+                if let Some(pos) = position {
+                    Self::move_mod_to_bottom_static(&model_clone, pos, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
+                }
             }
         });
 
@@ -362,6 +384,7 @@ impl ObjectImpl for ModListView {
         let sections_config_clone = self.sections_config.clone();
         let profile_path_clone = self.profile_path.clone();
         let filter_clone = self.filter.clone();
+        let column_view_clone = column_view.clone();
         add_section_button.connect_clicked(move |_| {
             Self::add_section_at_selection(
                 &model_clone,
@@ -369,6 +392,7 @@ impl ObjectImpl for ModListView {
                 &sections_config_clone,
                 &profile_path_clone,
                 &filter_clone,
+                &column_view_clone,
             );
         });
 
@@ -1355,7 +1379,70 @@ impl ModListView {
         0
     }
 
-    /// Move a mod up in the list (static version for closures)
+    /// Find the position of any item (ModEntry or SectionHeader) in the underlying model
+    fn find_item_position_in_model(model: &gio::ListStore, target: &glib::Object) -> Option<u32> {
+        // Check if target is a ModEntry
+        if let Some(mod_entry) = target.downcast_ref::<ModEntry>() {
+            let target_path = mod_entry.path();
+            for i in 0..model.n_items() {
+                if let Some(item) = model.item(i) {
+                    if let Some(entry) = item.downcast_ref::<ModEntry>() {
+                        if entry.path() == target_path {
+                            return Some(i);
+                        }
+                    }
+                }
+            }
+        }
+        // Check if target is a SectionHeader
+        else if let Some(section) = target.downcast_ref::<SectionHeader>() {
+            let target_id = section.section_id();
+            for i in 0..model.n_items() {
+                if let Some(item) = model.item(i) {
+                    if let Some(sec) = item.downcast_ref::<SectionHeader>() {
+                        if sec.section_id() == target_id {
+                            return Some(i);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Find the position of an item in the selection model (which wraps the filtered model)
+    fn find_item_position_in_selection(selection: &SingleSelection, target: &glib::Object) -> Option<u32> {
+        let n_items = selection.n_items();
+
+        // Check if target is a ModEntry
+        if let Some(mod_entry) = target.downcast_ref::<ModEntry>() {
+            let target_path = mod_entry.path();
+            for i in 0..n_items {
+                if let Some(item) = selection.item(i) {
+                    if let Some(entry) = item.downcast_ref::<ModEntry>() {
+                        if entry.path() == target_path {
+                            return Some(i);
+                        }
+                    }
+                }
+            }
+        }
+        // Check if target is a SectionHeader
+        else if let Some(section) = target.downcast_ref::<SectionHeader>() {
+            let target_id = section.section_id();
+            for i in 0..n_items {
+                if let Some(item) = selection.item(i) {
+                    if let Some(sec) = item.downcast_ref::<SectionHeader>() {
+                        if sec.section_id() == target_id {
+                            return Some(i);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Helper to get order value from any item (ModEntry or SectionHeader)
     fn get_item_order(item: &glib::Object) -> Option<u32> {
         if let Some(mod_entry) = item.downcast_ref::<ModEntry>() {
@@ -1482,8 +1569,10 @@ impl ModListView {
             // Rebuild model sorted
             Self::rebuild_model_sorted(model_store);
 
-            // Restore selection at new position (moved up by 1)
-            selection.set_selected(position - 1);
+            // Restore selection - find the moved item's position in the filtered selection model
+            if let Some(new_pos) = Self::find_item_position_in_selection(selection, &current_item) {
+                selection.set_selected(new_pos);
+            }
 
             // Sync section orders and save
             Self::sync_sections_to_config(model_store, sections_config, profile_path);
@@ -1529,8 +1618,10 @@ impl ModListView {
             // Rebuild model sorted
             Self::rebuild_model_sorted(model_store);
 
-            // Restore selection at new position (moved down by 1)
-            selection.set_selected(position + 1);
+            // Restore selection - find the moved item's position in the filtered selection model
+            if let Some(new_pos) = Self::find_item_position_in_selection(selection, &current_item) {
+                selection.set_selected(new_pos);
+            }
 
             // Sync section orders and save
             Self::sync_sections_to_config(model_store, sections_config, profile_path);
@@ -1583,8 +1674,10 @@ impl ModListView {
             // Rebuild model sorted
             Self::rebuild_model_sorted(model_store);
 
-            // Restore selection at position 0 (top)
-            selection.set_selected(0);
+            // Restore selection - find the moved item's position in the filtered selection model
+            if let Some(new_pos) = Self::find_item_position_in_selection(selection, &current_item) {
+                selection.set_selected(new_pos);
+            }
 
             // Sync section orders and save
             Self::sync_sections_to_config(model_store, sections_config, profile_path);
@@ -1640,8 +1733,10 @@ impl ModListView {
             // Rebuild model sorted
             Self::rebuild_model_sorted(model_store);
 
-            // Restore selection at bottom position
-            selection.set_selected(last_position);
+            // Restore selection - find the moved item's position in the filtered selection model
+            if let Some(new_pos) = Self::find_item_position_in_selection(selection, &current_item) {
+                selection.set_selected(new_pos);
+            }
 
             // Sync section orders and save
             Self::sync_sections_to_config(model_store, sections_config, profile_path);
@@ -1700,6 +1795,7 @@ impl ModListView {
         sections_config: &Rc<RefCell<SectionsConfig>>,
         profile_path: &Rc<RefCell<Option<PathBuf>>>,
         filter: &RefCell<Option<CustomFilter>>,
+        column_view: &ColumnView,
     ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
@@ -1737,6 +1833,12 @@ impl ModListView {
             // Update filter to reflect changes
             if let Some(filter) = filter.borrow().as_ref() {
                 filter.changed(FilterChange::Different);
+            }
+
+            // Scroll to top to show the new section
+            use gtk4::prelude::ScrollableExt;
+            if let Some(vadj) = column_view.vadjustment() {
+                vadj.set_value(0.0);
             }
         }
     }
