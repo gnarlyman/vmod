@@ -1,9 +1,11 @@
 mod application;
 mod config;
 mod conflict_panel;
+mod logging;
 mod mod_entry;
 mod mod_list;
 mod mods_json_view;
+mod nxm;
 mod preferences;
 mod profile;
 mod widgets;
@@ -13,6 +15,11 @@ use application::VmodApplication;
 use std::env;
 
 fn main() -> glib::ExitCode {
+    // Initialize logging first
+    if let Err(e) = logging::init() {
+        eprintln!("Failed to initialize logging: {}", e);
+    }
+
     // Set up schema directory for development (before GTK init)
     if let Ok(current_dir) = env::current_dir() {
         let schema_dir = current_dir.join("resources");

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=VMOD
+Comment=Mod manager for Daggerfall Unity
+Exec=vmod %u
+Icon=vmod
+Terminal=false
+Categories=Game;Utility;
+MimeType=x-scheme-handler/nxm;
+StartupNotify=true
+NoDisplay=false

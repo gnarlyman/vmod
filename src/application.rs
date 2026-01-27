@@ -3,6 +3,7 @@ use gtk4::{gio, glib, Application};
 use std::path::PathBuf;
 
 use crate::config;
+use crate::nxm::NxmLink;
 use crate::preferences::PreferencesDialog;
 use crate::window::VmodWindow;
 
@@ -14,6 +15,7 @@ impl VmodApplication {
     pub fn new() -> Self {
         let app = Application::builder()
             .application_id(config::APP_ID)
+            .flags(gio::ApplicationFlags::HANDLES_OPEN)
             .build();
 
         let vmod_app = Self { app };
@@ -131,8 +133,40 @@ impl VmodApplication {
 
     fn setup_signals(&self) {
         self.app.connect_activate(|app| {
-            let window = VmodWindow::new(app);
-            window.present();
+            // Only create a new window if none exists
+            if app.active_window().is_none() {
+                let window = VmodWindow::new(app);
+                window.present();
+            } else {
+                app.active_window().unwrap().present();
+            }
+        });
+
+        // Handle file/URI opening (including NXM links)
+        self.app.connect_open(|app, files, _hint| {
+            // First ensure the window exists
+            app.activate();
+
+            log::info!("NXM handler invoked with {} URI(s)", files.len());
+
+            // Process any NXM links
+            for (i, file) in files.iter().enumerate() {
+                let uri = file.uri().to_string();
+                log::debug!("Processing URI {}/{}: {}", i + 1, files.len(), uri);
+
+                if uri.starts_with("nxm://") {
+                    match NxmLink::parse(&uri) {
+                        Ok(nxm) => {
+                            nxm.log_info();
+                            // TODO: Actually download the mod
+                        }
+                        Err(e) => {
+                            log::error!("Failed to parse NXM link: {}", e);
+                            log::error!("URL was: {}", uri);
+                        }
+                    }
+                }
+            }
         });
     }
 
