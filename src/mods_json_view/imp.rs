@@ -1,19 +1,20 @@
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use gtk4::{
-    glib, gio, Box, Button, ColumnView, ColumnViewColumn, Label, Orientation, ScrolledWindow,
-    SignalListItemFactory, SingleSelection, CheckButton,
+    gio, glib, Box, Button, CheckButton, ColumnView, ColumnViewColumn, Label, Orientation,
+    PolicyType, ScrolledWindow, SignalListItemFactory, SingleSelection,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
 
-use crate::mod_entry::{DfmodEntry, load_mods_json, save_mods_json, SortingRules};
+use crate::mod_entry::{load_mods_json, save_mods_json, DfmodEntry, SortingRules};
 
 pub struct ModsJsonView {
     pub column_view: RefCell<Option<ColumnView>>,
     pub model: RefCell<Option<gio::ListStore>>,
     pub selection_model: RefCell<Option<SingleSelection>>,
     pub mods_json_path: RefCell<Option<PathBuf>>,
+    pub settings: RefCell<Option<gio::Settings>>,
 }
 
 impl Default for ModsJsonView {
@@ -23,6 +24,7 @@ impl Default for ModsJsonView {
             model: RefCell::new(None),
             selection_model: RefCell::new(None),
             mods_json_path: RefCell::new(None),
+            settings: RefCell::new(None),
         }
     }
 }
@@ -45,6 +47,10 @@ impl ObjectImpl for ModsJsonView {
         obj.set_margin_bottom(12);
         obj.set_margin_start(6);
         obj.set_margin_end(12);
+
+        // Initialize settings
+        let settings = gio::Settings::new(crate::config::APP_ID);
+        self.settings.replace(Some(settings.clone()));
 
         // Header label
         let header_label = Label::new(Some("Mods.json Entries"));
@@ -75,15 +81,16 @@ impl ObjectImpl for ModsJsonView {
         column_view.set_show_column_separators(true);
 
         // Add columns
-        self.add_checkbox_column(&column_view);
-        self.add_title_column(&column_view);
-        self.add_filename_column(&column_view);
-        self.add_priority_column(&column_view);
+        self.add_checkbox_column(&column_view, &settings);
+        self.add_title_column(&column_view, &settings);
+        self.add_filename_column(&column_view, &settings);
+        self.add_priority_column(&column_view, &settings);
 
         // Wrap in scrolled window
         let scrolled_window = ScrolledWindow::new();
         scrolled_window.set_vexpand(true);
         scrolled_window.set_hexpand(true);
+        scrolled_window.set_policy(PolicyType::Never, PolicyType::Automatic); // No horizontal scroll
         scrolled_window.set_child(Some(&column_view));
 
         obj.append(&scrolled_window);
@@ -189,18 +196,20 @@ impl WidgetImpl for ModsJsonView {}
 impl BoxImpl for ModsJsonView {}
 
 impl ModsJsonView {
-    fn add_checkbox_column(&self, column_view: &ColumnView) {
+    fn add_checkbox_column(&self, column_view: &ColumnView, settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
 
         factory.connect_setup(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
+            let list_item = item
+                .downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
             let check_button = CheckButton::new();
             list_item.set_child(Some(&check_button));
         });
 
         factory.connect_bind(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
+            let list_item = item
+                .downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
             let dfmod_entry = list_item
@@ -221,15 +230,17 @@ impl ModsJsonView {
         });
 
         let column = ColumnViewColumn::new(Some("On"), Some(factory));
+        column.set_resizable(true);
         column.set_fixed_width(35);
         column_view.append_column(&column);
     }
 
-    fn add_title_column(&self, column_view: &ColumnView) {
+    fn add_title_column(&self, column_view: &ColumnView, _settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
 
         factory.connect_setup(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
+            let list_item = item
+                .downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
             let label = Label::new(None);
             label.set_xalign(0.0);
@@ -237,7 +248,8 @@ impl ModsJsonView {
         });
 
         factory.connect_bind(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
+            let list_item = item
+                .downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
             let dfmod_entry = list_item
@@ -261,8 +273,11 @@ impl ModsJsonView {
                 let mut widget = label_clone.clone().upcast::<gtk4::Widget>();
                 while let Some(parent) = widget.parent() {
                     if parent.css_name() == "row" {
-                        if entry.highlighted() { parent.add_css_class("highlighted"); }
-                        else { parent.remove_css_class("highlighted"); }
+                        if entry.highlighted() {
+                            parent.add_css_class("highlighted");
+                        } else {
+                            parent.remove_css_class("highlighted");
+                        }
                         break;
                     }
                     widget = parent;
@@ -271,15 +286,16 @@ impl ModsJsonView {
         });
 
         let column = ColumnViewColumn::new(Some("Title"), Some(factory));
-        column.set_expand(true);
+        column.set_resizable(true);
         column_view.append_column(&column);
     }
 
-    fn add_filename_column(&self, column_view: &ColumnView) {
+    fn add_filename_column(&self, column_view: &ColumnView, _settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
 
         factory.connect_setup(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
+            let list_item = item
+                .downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
             let label = Label::new(None);
             label.set_xalign(0.0);
@@ -287,7 +303,8 @@ impl ModsJsonView {
         });
 
         factory.connect_bind(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
+            let list_item = item
+                .downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
             let dfmod_entry = list_item
@@ -307,15 +324,17 @@ impl ModsJsonView {
         });
 
         let column = ColumnViewColumn::new(Some("File"), Some(factory));
-        column.set_fixed_width(120);
+        column.set_resizable(true);
+        column.set_fixed_width(150);
         column_view.append_column(&column);
     }
 
-    fn add_priority_column(&self, column_view: &ColumnView) {
+    fn add_priority_column(&self, column_view: &ColumnView, _settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
 
         factory.connect_setup(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
+            let list_item = item
+                .downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
             let label = Label::new(None);
             label.set_xalign(0.5);
@@ -323,7 +342,8 @@ impl ModsJsonView {
         });
 
         factory.connect_bind(move |_factory, item| {
-            let list_item = item.downcast_ref::<gtk4::ListItem>()
+            let list_item = item
+                .downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
             let dfmod_entry = list_item
@@ -339,21 +359,20 @@ impl ModsJsonView {
             label.set_text(&dfmod_entry.load_priority().to_string());
 
             let label_clone = label.clone();
-            dfmod_entry.connect_notify_local(
-                Some("load-priority"),
-                move |entry, _| {
-                    label_clone.set_text(&entry.load_priority().to_string());
-                },
-            );
+            dfmod_entry.connect_notify_local(Some("load-priority"), move |entry, _| {
+                label_clone.set_text(&entry.load_priority().to_string());
+            });
         });
 
         let column = ColumnViewColumn::new(Some("#"), Some(factory));
-        column.set_fixed_width(35);
+        column.set_resizable(true);
+        column.set_expand(true);  // Last column fills remaining space
         column_view.append_column(&column);
     }
 
     pub fn load_mods_json_static(&self, mods_json_path: &std::path::Path) {
-        self.mods_json_path.replace(Some(mods_json_path.to_path_buf()));
+        self.mods_json_path
+            .replace(Some(mods_json_path.to_path_buf()));
 
         let model = self.model.borrow();
         if let Some(model) = model.as_ref() {
@@ -405,7 +424,11 @@ impl ModsJsonView {
         save_mods_json(mods_json_path, &entries)
     }
 
-    fn move_entry_up_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry, selection: &SingleSelection) {
+    fn move_entry_up_static(
+        model: &RefCell<Option<gio::ListStore>>,
+        entry: &DfmodEntry,
+        selection: &SingleSelection,
+    ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
             let current_priority = entry.load_priority();
@@ -450,7 +473,11 @@ impl ModsJsonView {
         }
     }
 
-    fn move_entry_down_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry, selection: &SingleSelection) {
+    fn move_entry_down_static(
+        model: &RefCell<Option<gio::ListStore>>,
+        entry: &DfmodEntry,
+        selection: &SingleSelection,
+    ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
             let current_priority = entry.load_priority();
@@ -497,7 +524,11 @@ impl ModsJsonView {
         }
     }
 
-    fn move_entry_to_top_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry, selection: &SingleSelection) {
+    fn move_entry_to_top_static(
+        model: &RefCell<Option<gio::ListStore>>,
+        entry: &DfmodEntry,
+        selection: &SingleSelection,
+    ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
             let current_priority = entry.load_priority();
@@ -513,8 +544,9 @@ impl ModsJsonView {
             for i in 0..model_store.n_items() {
                 if let Some(obj) = model_store.item(i) {
                     if let Ok(other_entry) = obj.downcast::<DfmodEntry>() {
-                        if other_entry.load_priority() < current_priority &&
-                           other_entry.file_name() != entry.file_name() {
+                        if other_entry.load_priority() < current_priority
+                            && other_entry.file_name() != entry.file_name()
+                        {
                             other_entry.set_load_priority(other_entry.load_priority() + 1);
                         }
                     }
@@ -543,7 +575,11 @@ impl ModsJsonView {
         }
     }
 
-    fn move_entry_to_bottom_static(model: &RefCell<Option<gio::ListStore>>, entry: &DfmodEntry, selection: &SingleSelection) {
+    fn move_entry_to_bottom_static(
+        model: &RefCell<Option<gio::ListStore>>,
+        entry: &DfmodEntry,
+        selection: &SingleSelection,
+    ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
             let current_priority = entry.load_priority();
@@ -560,8 +596,9 @@ impl ModsJsonView {
             for i in 0..model_store.n_items() {
                 if let Some(obj) = model_store.item(i) {
                     if let Ok(other_entry) = obj.downcast::<DfmodEntry>() {
-                        if other_entry.load_priority() > current_priority &&
-                           other_entry.file_name() != entry.file_name() {
+                        if other_entry.load_priority() > current_priority
+                            && other_entry.file_name() != entry.file_name()
+                        {
                             other_entry.set_load_priority(other_entry.load_priority() - 1);
                         }
                     }
@@ -692,7 +729,10 @@ impl ModsJsonView {
             }
         }
 
-        println!("Applied sorting rules: {} mods reordered", sorted_entries.len());
+        println!(
+            "Applied sorting rules: {} mods reordered",
+            sorted_entries.len()
+        );
     }
 
     pub fn highlight_entries(&self, file_names: &[String]) {

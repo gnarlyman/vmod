@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use gtk4::{
-    glib, gio, Box, Button, ColumnView, ColumnViewColumn, Label, Orientation, ScrolledWindow,
+    glib, gio, Box, Button, ColumnView, ColumnViewColumn, Label, Orientation, PolicyType, ScrolledWindow,
     SignalListItemFactory, SingleSelection, CheckButton, SearchEntry, Paned, UriLauncher,
     CustomFilter, FilterListModel, FilterChange, ProgressBar, Entry,
 };
@@ -209,16 +209,17 @@ impl ObjectImpl for ModListView {
         column_view.set_show_column_separators(true);
 
         // Add columns
-        self.add_checkbox_column(&column_view);
-        self.add_name_column(&column_view);
-        self.add_version_column(&column_view);
-        self.add_order_column(&column_view);
-        self.add_conflicts_column(&column_view);
+        self.add_checkbox_column(&column_view, &settings);
+        self.add_name_column(&column_view, &settings);
+        self.add_version_column(&column_view, &settings);
+        self.add_order_column(&column_view, &settings);
+        self.add_conflicts_column(&column_view, &settings);
 
         // Wrap in scrolled window
         let scrolled_window = ScrolledWindow::new();
         scrolled_window.set_vexpand(true);
         scrolled_window.set_hexpand(true);
+        scrolled_window.set_policy(PolicyType::Never, PolicyType::Automatic);  // No horizontal scroll
         scrolled_window.set_child(Some(&column_view));
 
         left_box.append(&scrolled_window);
@@ -586,7 +587,7 @@ impl WidgetImpl for ModListView {}
 impl BoxImpl for ModListView {}
 
 impl ModListView {
-    fn add_checkbox_column(&self, column_view: &ColumnView) {
+    fn add_checkbox_column(&self, column_view: &ColumnView, settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
 
         // Setup: Create a Box that can hold either CheckButton or expander Button
@@ -732,11 +733,12 @@ impl ModListView {
         });
 
         let column = ColumnViewColumn::new(Some("On"), Some(factory));
+        column.set_resizable(true);
         column.set_fixed_width(35);
         column_view.append_column(&column);
     }
 
-    fn add_name_column(&self, column_view: &ColumnView) {
+    fn add_name_column(&self, column_view: &ColumnView, _settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
 
         factory.connect_setup(move |_factory, item| {
@@ -812,11 +814,11 @@ impl ModListView {
         });
 
         let column = ColumnViewColumn::new(Some("Name"), Some(factory));
-        column.set_expand(true);
+        column.set_resizable(true);
         column_view.append_column(&column);
     }
 
-    fn add_version_column(&self, column_view: &ColumnView) {
+    fn add_version_column(&self, column_view: &ColumnView, _settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
 
         factory.connect_setup(move |_factory, item| {
@@ -868,11 +870,12 @@ impl ModListView {
         });
 
         let column = ColumnViewColumn::new(Some("Ver"), Some(factory));
+        column.set_resizable(true);
         column.set_fixed_width(60);
         column_view.append_column(&column);
     }
 
-    fn add_order_column(&self, column_view: &ColumnView) {
+    fn add_order_column(&self, column_view: &ColumnView, _settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
 
         factory.connect_setup(move |_factory, item| {
@@ -936,11 +939,12 @@ impl ModListView {
         });
 
         let column = ColumnViewColumn::new(Some("#"), Some(factory));
+        column.set_resizable(true);
         column.set_fixed_width(35);
         column_view.append_column(&column);
     }
 
-    fn add_conflicts_column(&self, column_view: &ColumnView) {
+    fn add_conflicts_column(&self, column_view: &ColumnView, _settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
 
         factory.connect_setup(move |_factory, item| {
@@ -1024,7 +1028,8 @@ impl ModListView {
         });
 
         let column = ColumnViewColumn::new(Some("⚠"), Some(factory));
-        column.set_fixed_width(35);
+        column.set_resizable(true);
+        column.set_expand(true);  // Last column fills remaining space
         column_view.append_column(&column);
     }
 
