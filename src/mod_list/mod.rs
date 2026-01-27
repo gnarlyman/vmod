@@ -1,4 +1,13 @@
 mod imp;
+mod model_utils;
+mod vfs_state;
+mod data_loading;
+mod reordering;
+mod mods_json_sync;
+mod conflict_scan;
+mod backup_ui;
+mod columns;
+mod ui_builder;
 
 use gtk4::subclass::prelude::*;
 use gtk4::{gio, glib, Box};
