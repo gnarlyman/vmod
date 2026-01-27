@@ -2,7 +2,7 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    gio, glib, Box, Button, CheckButton, ColumnView, ColumnViewColumn, FilterChange,
+    gio, glib, Box, Button, CheckButton, ColumnView, ColumnViewColumn, EditableLabel, FilterChange,
     Label, Orientation, SignalListItemFactory,
 };
 
@@ -165,52 +165,75 @@ impl ModListView {
     pub fn add_name_column(&self, column_view: &ColumnView, _settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
 
+        // Setup: Create a Box container that can hold either Label or EditableLabel
         factory.connect_setup(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
-            let label = Label::new(None);
-            label.set_xalign(0.0);
-            list_item.set_child(Some(&label));
+            let container = Box::new(Orientation::Horizontal, 0);
+            list_item.set_child(Some(&container));
         });
+
+        // Clone refs needed for bind closure
+        let sections_config_ref = self.sections_config.clone();
+        let profile_path_ref = self.profile_path.clone();
 
         factory.connect_bind(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
-            let label = list_item
+            let container = list_item
                 .child()
-                .and_downcast::<Label>()
-                .expect("Child must be Label");
+                .and_downcast::<Box>()
+                .expect("Child must be Box");
+
+            // Clear any previous children
+            while let Some(child) = container.first_child() {
+                container.remove(&child);
+            }
 
             // Check if this is a section header or mod entry
             if let Some(section) = list_item.item().and_downcast::<SectionHeader>() {
-                // Section header: show name with bold styling
-                label.add_css_class("heading");
-                label.set_markup(&format!("<b>{}</b>", glib::markup_escape_text(&section.name())));
+                // Section header: use EditableLabel for inline editing
+                let editable = EditableLabel::new(&section.name());
+                editable.add_css_class("heading");
+                editable.set_hexpand(true);
+                editable.set_halign(gtk4::Align::Fill);
 
-                let binding = section
-                    .bind_property("name", &label, "label")
-                    .transform_to(|_, name: String| {
-                        Some(format!("<b>{}</b>", glib::markup_escape_text(&name)))
-                    })
-                    .sync_create()
-                    .build();
+                // Connect to changed signal to save rename when editing completes
+                let section_clone = section.clone();
+                let sections_config_clone = sections_config_ref.clone();
+                let profile_path_clone = profile_path_ref.clone();
+                let handler_id = editable.connect_changed(move |label| {
+                    let new_name = label.text().to_string();
+                    if !new_name.is_empty() {
+                        // Update the section's name property
+                        section_clone.set_name(new_name.clone());
+                        // Update the config and save
+                        sections_config_clone.borrow_mut().rename_section(&section_clone.section_id(), &new_name);
+                        if let Some(path) = profile_path_clone.borrow().as_ref() {
+                            let _ = sections_config_clone.borrow().save(path);
+                        }
+                    }
+                });
 
-                label.set_use_markup(true);
+                container.append(&editable);
 
                 unsafe {
-                    list_item.set_data("name-binding", binding);
                     list_item.set_data("is-section-name", true);
+                    list_item.set_data("editable-handler-id", handler_id);
                 }
             } else if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
-                // Regular mod entry
-                label.remove_css_class("heading");
-                label.set_use_markup(false);
+                // Regular mod entry: use Label (not editable)
+                let label = Label::new(None);
+                label.set_xalign(0.0);
+                label.set_hexpand(true);
 
                 let binding = mod_entry
                     .bind_property("name", &label, "label")
                     .sync_create()
                     .build();
+
+                container.append(&label);
 
                 unsafe {
                     list_item.set_data("name-binding", binding);
@@ -223,17 +246,29 @@ impl ModListView {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
                 .expect("Item must be ListItem");
 
-            // Clean up CSS class if it was a section
-            if let Some(label) = list_item.child().and_downcast::<Label>() {
-                label.remove_css_class("heading");
-                label.set_use_markup(false);
-            }
+            let is_section: bool = unsafe {
+                list_item.steal_data::<bool>("is-section-name").unwrap_or(false)
+            };
 
-            unsafe {
-                if let Some(binding) = list_item.steal_data::<glib::Binding>("name-binding") {
-                    binding.unbind();
+            if is_section {
+                // Clean up EditableLabel handler
+                if let Some(container) = list_item.child().and_downcast::<Box>() {
+                    if let Some(editable) = container.first_child().and_downcast::<EditableLabel>() {
+                        editable.remove_css_class("heading");
+                        unsafe {
+                            if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("editable-handler-id") {
+                                editable.disconnect(handler_id);
+                            }
+                        }
+                    }
                 }
-                let _ = list_item.steal_data::<bool>("is-section-name");
+            } else {
+                // Clean up Label binding
+                unsafe {
+                    if let Some(binding) = list_item.steal_data::<glib::Binding>("name-binding") {
+                        binding.unbind();
+                    }
+                }
             }
         });
 
