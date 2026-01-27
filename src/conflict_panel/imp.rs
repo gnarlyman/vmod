@@ -1034,6 +1034,16 @@ impl ConflictPanel {
                         model.append(&item);
                     }
 
+                    // Merge any new cache entries back to shared cache
+                    // (cache_ref borrow was dropped when we cloned into local_cache)
+                    if let Some(shared) = self.shared_dfmod_cache.borrow().as_ref() {
+                        if let Ok(mut guard) = shared.lock() {
+                            for (key, value) in local_cache {
+                                guard.entry(key).or_insert(value);
+                            }
+                        }
+                    }
+
                     // Update tab label with total asset count
                     self.update_dfmods_tab_label(total_assets);
                 }
