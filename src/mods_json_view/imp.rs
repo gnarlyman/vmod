@@ -230,7 +230,7 @@ impl ModsJsonView {
         });
 
         let column = ColumnViewColumn::new(Some("On"), Some(factory));
-        column.set_resizable(true);
+        column.set_resizable(false);
         column.set_fixed_width(35);
         column_view.append_column(&column);
     }
@@ -286,7 +286,8 @@ impl ModsJsonView {
         });
 
         let column = ColumnViewColumn::new(Some("Title"), Some(factory));
-        column.set_resizable(true);
+        column.set_resizable(false);
+        column.set_fixed_width(200);
         column_view.append_column(&column);
     }
 
@@ -324,8 +325,8 @@ impl ModsJsonView {
         });
 
         let column = ColumnViewColumn::new(Some("File"), Some(factory));
-        column.set_resizable(true);
-        column.set_fixed_width(150);
+        column.set_resizable(false);
+        column.set_expand(true);
         column_view.append_column(&column);
     }
 
@@ -365,8 +366,8 @@ impl ModsJsonView {
         });
 
         let column = ColumnViewColumn::new(Some("#"), Some(factory));
-        column.set_resizable(true);
-        column.set_expand(true);  // Last column fills remaining space
+        column.set_resizable(false);
+        column.set_fixed_width(35);
         column_view.append_column(&column);
     }
 

@@ -733,7 +733,7 @@ impl ModListView {
         });
 
         let column = ColumnViewColumn::new(Some("On"), Some(factory));
-        column.set_resizable(true);
+        column.set_resizable(false);
         column.set_fixed_width(35);
         column_view.append_column(&column);
     }
@@ -814,7 +814,8 @@ impl ModListView {
         });
 
         let column = ColumnViewColumn::new(Some("Name"), Some(factory));
-        column.set_resizable(true);
+        column.set_resizable(false);
+        column.set_expand(true);
         column_view.append_column(&column);
     }
 
@@ -870,7 +871,7 @@ impl ModListView {
         });
 
         let column = ColumnViewColumn::new(Some("Ver"), Some(factory));
-        column.set_resizable(true);
+        column.set_resizable(false);
         column.set_fixed_width(60);
         column_view.append_column(&column);
     }
@@ -939,7 +940,7 @@ impl ModListView {
         });
 
         let column = ColumnViewColumn::new(Some("#"), Some(factory));
-        column.set_resizable(true);
+        column.set_resizable(false);
         column.set_fixed_width(35);
         column_view.append_column(&column);
     }
@@ -1028,8 +1029,8 @@ impl ModListView {
         });
 
         let column = ColumnViewColumn::new(Some("⚠"), Some(factory));
-        column.set_resizable(true);
-        column.set_expand(true);  // Last column fills remaining space
+        column.set_resizable(false);
+        column.set_fixed_width(35);
         column_view.append_column(&column);
     }
 
