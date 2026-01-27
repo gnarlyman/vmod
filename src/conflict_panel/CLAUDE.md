@@ -18,4 +18,11 @@
 | #2726 | 11:29 PM | 🔵 | Files Tab Implementation Uses TreeListModel with Lazy Loading | ~211 |
 | #2717 | " | 🔵 | ConflictPanel Implements TreeListModel with TreeExpander Pattern | ~474 |
 | #2712 | 11:28 PM | 🔵 | ConflictPanel Widget Structure and API | ~347 |
+
+### Jan 27, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #2771 | 12:19 AM | 🔵 | ConflictPanel Tree View Implementation with DFMod Support | ~414 |
+| #2770 | " | 🔵 | Conflict Panel Architecture for Cached Data Display | ~245 |
 </claude-mem-context>
