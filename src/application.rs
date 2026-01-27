@@ -1,10 +1,12 @@
 use gtk4::prelude::*;
 use gtk4::{gio, glib, Application, ProgressBar, Label, Window};
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use crate::config;
-use crate::nexus_api::{check_existing_file, delete_existing_file, DownloadManager, DownloadMetadata, DownloadProgress, DownloadState, NexusClient, NexusConfig};
+use crate::nexus_api::{check_existing_file, delete_existing_file, DownloadLink, DownloadManager, DownloadMetadata, DownloadProgress, DownloadState, NexusClient, NexusConfig};
 use crate::nxm::NxmLink;
 use crate::preferences::PreferencesDialog;
 use crate::window::VmodWindow;
@@ -200,18 +202,127 @@ impl VmodApplication {
             }
         };
 
-        // Generate file name to check if it already exists
-        let file_name = format!("{}_{}_{}.zip", nxm.game, nxm.mod_id, nxm.file_id);
+        // Proceed with fetching links and download
+        Self::fetch_links_and_download(window, nxm, api_key, key, expires);
+    }
 
-        // Check if file already exists
-        if let Some(existing_size) = check_existing_file(&file_name) {
-            log::info!("File {} already exists ({} bytes), prompting user", file_name, existing_size);
-            Self::show_file_exists_dialog(window, nxm, api_key, key, expires, file_name, existing_size);
-            return;
-        }
+    /// Extract original filename from a Nexus download URL
+    fn extract_filename_from_url(url: &str) -> Option<String> {
+        // URL format: https://.../Bestiary%20Linux-222-2-2-1-1708550222.zip?md5=...
+        url.split('/')
+            .last()
+            .and_then(|segment| segment.split('?').next())
+            .and_then(|encoded| urlencoding::decode(encoded).ok())
+            .map(|s| s.into_owned())
+    }
 
-        // Proceed with download
-        Self::start_download(window, nxm, api_key, key, expires, file_name);
+    /// Fetch download links and then proceed with download
+    fn fetch_links_and_download(
+        window: &Window,
+        nxm: NxmLink,
+        api_key: String,
+        key: String,
+        expires: u64,
+    ) {
+        // Show a temporary "Fetching..." dialog
+        let status_dialog = gtk4::Window::builder()
+            .title("Preparing Download")
+            .modal(true)
+            .transient_for(window)
+            .default_width(300)
+            .default_height(80)
+            .resizable(false)
+            .build();
+
+        let content = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
+        content.set_margin_top(18);
+        content.set_margin_bottom(18);
+        content.set_margin_start(18);
+        content.set_margin_end(18);
+
+        let spinner = gtk4::Spinner::new();
+        spinner.start();
+        let status_label = Label::new(Some("Fetching download link..."));
+        content.append(&spinner);
+        content.append(&status_label);
+        status_dialog.set_child(Some(&content));
+        status_dialog.present();
+
+        // Clone data for background thread
+        let game = nxm.game.clone();
+        let mod_id = nxm.mod_id;
+        let file_id = nxm.file_id;
+        let api_key_clone = api_key.clone();
+        let key_clone = key.clone();
+
+        // Result state
+        let fetch_result: Arc<Mutex<Option<Result<Vec<DownloadLink>, String>>>> = Arc::new(Mutex::new(None));
+        let fetch_result_thread = fetch_result.clone();
+
+        // Spawn thread to fetch links
+        std::thread::spawn(move || {
+            let client = match NexusClient::new(api_key_clone, game) {
+                Ok(c) => c,
+                Err(e) => {
+                    *fetch_result_thread.lock().unwrap() = Some(Err(format!("Failed to create API client: {}", e)));
+                    return;
+                }
+            };
+
+            log::info!("Fetching download link for mod {} file {}", mod_id, file_id);
+            match client.get_download_link(mod_id, file_id, &key_clone, expires) {
+                Ok(response) => {
+                    *fetch_result_thread.lock().unwrap() = Some(Ok(response.data));
+                }
+                Err(e) => {
+                    *fetch_result_thread.lock().unwrap() = Some(Err(format!("Failed to get download link: {}", e)));
+                }
+            }
+        });
+
+        // Poll for result - wrap nxm in Option for single consumption
+        let window_clone = window.clone();
+        let status_dialog_clone = status_dialog.clone();
+        let nxm_opt: Rc<RefCell<Option<NxmLink>>> = Rc::new(RefCell::new(Some(nxm)));
+        let api_key_opt: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(Some(api_key)));
+        let key_opt: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(Some(key)));
+        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            if let Some(result) = fetch_result.lock().unwrap().take() {
+                status_dialog_clone.close();
+                match result {
+                    Ok(links) if !links.is_empty() => {
+                        let nxm = nxm_opt.borrow_mut().take().unwrap();
+                        let api_key = api_key_opt.borrow_mut().take().unwrap();
+                        let key = key_opt.borrow_mut().take().unwrap();
+
+                        // Extract original filename from first download link
+                        let file_name = Self::extract_filename_from_url(&links[0].uri)
+                            .unwrap_or_else(|| format!("{}_{}_{}.zip", nxm.game, nxm.mod_id, nxm.file_id));
+
+                        log::info!("Using filename: {}", file_name);
+
+                        // Check if file already exists
+                        if let Some(existing_size) = check_existing_file(&file_name) {
+                            log::info!("File {} already exists ({} bytes), prompting user", file_name, existing_size);
+                            Self::show_file_exists_dialog(&window_clone, nxm, api_key, key, expires, file_name, existing_size, links);
+                        } else {
+                            // Proceed with download
+                            Self::start_download(&window_clone, nxm, api_key, file_name, links);
+                        }
+                    }
+                    Ok(_) => {
+                        log::error!("No download links available");
+                        Self::show_error_dialog(&window_clone, "Download Failed", "No download links available from Nexus Mods.");
+                    }
+                    Err(e) => {
+                        log::error!("Failed to fetch download links: {}", e);
+                        Self::show_error_dialog(&window_clone, "Download Failed", &format!("Failed to get download link: {}", e));
+                    }
+                }
+                return glib::ControlFlow::Break;
+            }
+            glib::ControlFlow::Continue
+        });
     }
 
     /// Show dialog when download file already exists
@@ -219,10 +330,11 @@ impl VmodApplication {
         window: &Window,
         nxm: NxmLink,
         api_key: String,
-        key: String,
-        expires: u64,
+        _key: String,
+        _expires: u64,
         file_name: String,
         existing_size: u64,
+        links: Vec<DownloadLink>,
     ) {
         let size_str = if existing_size < 1024 * 1024 {
             format!("{:.1} KB", existing_size as f64 / 1024.0)
@@ -257,7 +369,7 @@ impl VmodApplication {
                         log::error!("Failed to delete existing file: {}", e);
                         return;
                     }
-                    Self::start_download(&window_clone, nxm, api_key, key, expires, file_name);
+                    Self::start_download(&window_clone, nxm, api_key, file_name, links);
                 }
                 _ => {
                     // Dialog was dismissed
@@ -271,10 +383,9 @@ impl VmodApplication {
     fn start_download(
         window: &Window,
         nxm: NxmLink,
-        api_key: String,
-        key: String,
-        expires: u64,
+        _api_key: String,
         file_name: String,
+        links: Vec<DownloadLink>,
     ) {
         // Create progress dialog
         let dialog = gtk4::Window::builder()
@@ -292,7 +403,7 @@ impl VmodApplication {
         content.set_margin_start(18);
         content.set_margin_end(18);
 
-        let status_label = Label::new(Some("Fetching download link..."));
+        let status_label = Label::new(Some("Starting download..."));
         content.append(&status_label);
 
         let progress_bar = ProgressBar::new();
@@ -337,30 +448,6 @@ impl VmodApplication {
 
         // Spawn download thread
         std::thread::spawn(move || {
-            // Create API client
-            let client = match NexusClient::new(api_key, game.clone()) {
-                Ok(c) => c,
-                Err(e) => {
-                    *download_result_thread.lock().unwrap() = Some(Err(format!("Failed to create API client: {}", e)));
-                    return;
-                }
-            };
-
-            // Get download links
-            log::info!("Fetching download link for mod {} file {}", mod_id, file_id);
-            let links = match client.get_download_link(mod_id, file_id, &key, expires) {
-                Ok(response) => response.data,
-                Err(e) => {
-                    *download_result_thread.lock().unwrap() = Some(Err(format!("Failed to get download link: {}", e)));
-                    return;
-                }
-            };
-
-            if links.is_empty() {
-                *download_result_thread.lock().unwrap() = Some(Err("No download links available".to_string()));
-                return;
-            }
-
             // Create download manager
             let download_manager = match DownloadManager::new() {
                 Ok(dm) => dm,

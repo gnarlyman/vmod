@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use gtk4::{
-    glib, gio, Box, Label, Notebook, Orientation, ScrolledWindow,
+    glib, gio, Box, Button, Label, Notebook, Orientation, Paned, ScrolledWindow,
     ListView, SignalListItemFactory, SingleSelection, TreeExpander, TreeListModel,
 };
 use std::cell::RefCell;
@@ -11,7 +11,9 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use crate::mod_entry::{TreeItem, get_children_at_path, ModConflictSummary, DfmodCacheKey, parse_dfmod_basic, extract_dfmod_assets_cached};
+use crate::nexus_api::{downloads_dir, DownloadMetadata};
 use crate::widgets::tree_filter::{TreeFilterState, TreeFilterWidget};
+use super::download_item::DownloadItem;
 
 /// Get children at a given prefix from flat asset paths.
 ///
@@ -111,6 +113,12 @@ pub struct ConflictPanel {
     pub dfmods_filter_widget: RefCell<Option<TreeFilterWidget>>,
     pub dfmods_box: RefCell<Option<Box>>,
     pub dfmods_scroll: RefCell<Option<ScrolledWindow>>,
+    // Downloads pane components
+    pub downloads_list: RefCell<Option<ListView>>,
+    pub downloads_model: RefCell<Option<gio::ListStore>>,
+    pub downloads_paned: RefCell<Option<Paned>>,
+    pub install_button: RefCell<Option<Button>>,
+    pub delete_button: RefCell<Option<Button>>,
 }
 
 impl Default for ConflictPanel {
@@ -135,6 +143,11 @@ impl Default for ConflictPanel {
             dfmods_filter_widget: RefCell::new(None),
             dfmods_box: RefCell::new(None),
             dfmods_scroll: RefCell::new(None),
+            downloads_list: RefCell::new(None),
+            downloads_model: RefCell::new(None),
+            downloads_paned: RefCell::new(None),
+            install_button: RefCell::new(None),
+            delete_button: RefCell::new(None),
         }
     }
 }
@@ -263,13 +276,17 @@ impl ObjectImpl for ConflictPanel {
 
         self.conflicts_list.replace(Some(conflicts_list));
 
-        // Files tab
+        // Files tab with Paned layout (Files left, Downloads right)
+        let files_paned = Paned::new(Orientation::Horizontal);
+        files_paned.set_wide_handle(true);
+
+        // Left side: Files content
         let files_box = Box::new(Orientation::Vertical, 6);
         files_box.set_margin_start(6);
         files_box.set_margin_end(6);
         files_box.set_margin_top(6);
 
-        // Add filter widget at top of Files tab
+        // Add filter widget at top of Files section
         let filter_widget = TreeFilterWidget::new();
         filter_widget.set_placeholder_text(Some("Filter files..."));
         files_box.append(&filter_widget);
@@ -300,6 +317,132 @@ impl ObjectImpl for ConflictPanel {
         self.files_list.replace(Some(files_list));
         self.files_box.replace(Some(files_box.clone()));
         self.files_scroll.replace(Some(files_scroll));
+
+        // Right side: Downloads content
+        let downloads_box = Box::new(Orientation::Vertical, 6);
+        downloads_box.set_margin_start(6);
+        downloads_box.set_margin_end(6);
+        downloads_box.set_margin_top(6);
+
+        let downloads_header = Label::new(Some("Downloads"));
+        downloads_header.set_xalign(0.0);
+        downloads_header.add_css_class("heading");
+        downloads_box.append(&downloads_header);
+
+        let downloads_scroll = ScrolledWindow::new();
+        downloads_scroll.set_vexpand(true);
+        downloads_scroll.set_hexpand(true);
+        downloads_scroll.set_min_content_height(150);
+        downloads_scroll.set_max_content_height(200);
+
+        // Create downloads ListStore
+        let downloads_store = gio::ListStore::new::<DownloadItem>();
+        self.downloads_model.replace(Some(downloads_store.clone()));
+
+        // Create downloads ListView
+        let downloads_selection = SingleSelection::new(Some(downloads_store.clone()));
+        downloads_selection.set_autoselect(false);
+        downloads_selection.set_can_unselect(true);
+
+        let downloads_list = ListView::new(Some(downloads_selection.clone()), None::<SignalListItemFactory>);
+        downloads_list.set_show_separators(true);
+
+        // Set up factory for downloads list
+        let downloads_factory = SignalListItemFactory::new();
+        downloads_factory.connect_setup(|_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>().unwrap();
+            let hbox = Box::new(Orientation::Horizontal, 8);
+            hbox.set_margin_start(6);
+            hbox.set_margin_end(6);
+            hbox.set_margin_top(4);
+            hbox.set_margin_bottom(4);
+
+            let name_label = Label::new(None);
+            name_label.set_xalign(0.0);
+            name_label.set_hexpand(true);
+            name_label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+
+            let size_label = Label::new(None);
+            size_label.add_css_class("dim-label");
+
+            hbox.append(&name_label);
+            hbox.append(&size_label);
+            list_item.set_child(Some(&hbox));
+        });
+
+        downloads_factory.connect_bind(|_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>().unwrap();
+            if let Some(download_item) = list_item.item().and_downcast::<DownloadItem>() {
+                if let Some(hbox) = list_item.child().and_downcast::<Box>() {
+                    if let Some(name_label) = hbox.first_child().and_downcast::<Label>() {
+                        name_label.set_text(&download_item.display_name());
+                        name_label.set_tooltip_text(Some(&download_item.file_name()));
+                    }
+                    if let Some(size_label) = hbox.last_child().and_downcast::<Label>() {
+                        size_label.set_text(&download_item.size_string());
+                    }
+                }
+            }
+        });
+
+        downloads_list.set_factory(Some(&downloads_factory));
+        downloads_scroll.set_child(Some(&downloads_list));
+        downloads_box.append(&downloads_scroll);
+
+        // Button bar
+        let button_bar = Box::new(Orientation::Horizontal, 6);
+        button_bar.set_margin_top(6);
+        button_bar.set_margin_bottom(6);
+        button_bar.set_halign(gtk4::Align::End);
+
+        let delete_button = Button::with_label("Delete");
+        delete_button.set_sensitive(false);
+        delete_button.add_css_class("destructive-action");
+
+        let install_button = Button::with_label("Install");
+        install_button.set_sensitive(false);
+        install_button.add_css_class("suggested-action");
+
+        button_bar.append(&delete_button);
+        button_bar.append(&install_button);
+        downloads_box.append(&button_bar);
+
+        // Connect selection change to enable/disable buttons
+        let install_btn = install_button.clone();
+        let delete_btn = delete_button.clone();
+        downloads_selection.connect_selected_notify(move |selection| {
+            let has_selection = selection.selected() != gtk4::INVALID_LIST_POSITION;
+            install_btn.set_sensitive(has_selection);
+            delete_btn.set_sensitive(has_selection);
+        });
+
+        // Connect Install button click
+        let obj_clone = obj.clone();
+        let selection_clone = downloads_selection.clone();
+        install_button.connect_clicked(move |_| {
+            obj_clone.imp().on_install_clicked(&selection_clone);
+        });
+
+        // Connect Delete button click
+        let obj_clone = obj.clone();
+        let selection_clone = downloads_selection.clone();
+        delete_button.connect_clicked(move |_| {
+            obj_clone.imp().on_delete_clicked(&selection_clone);
+        });
+
+        self.downloads_list.replace(Some(downloads_list));
+        self.install_button.replace(Some(install_button));
+        self.delete_button.replace(Some(delete_button));
+
+        // Set up paned with both sides
+        files_paned.set_start_child(Some(&files_box));
+        files_paned.set_end_child(Some(&downloads_box));
+        files_paned.set_resize_start_child(true);
+        files_paned.set_resize_end_child(true);
+        files_paned.set_shrink_start_child(false);
+        files_paned.set_shrink_end_child(false);
+
+        self.downloads_paned.replace(Some(files_paned.clone()));
 
         // DFMods tab
         let dfmods_box = Box::new(Orientation::Vertical, 6);
@@ -344,7 +487,7 @@ impl ObjectImpl for ConflictPanel {
         let files_label = Label::new(Some("Files"));
         let dfmods_label = Label::new(Some("DFMods"));
 
-        notebook.append_page(&files_box, Some(&files_label));
+        notebook.append_page(&files_paned, Some(&files_label));
         notebook.append_page(&dfmods_box, Some(&dfmods_label));
         notebook.append_page(&conflicts_box, Some(&conflicts_label));
 
@@ -887,6 +1030,9 @@ impl ConflictPanel {
 
         // Update dfmods tab using shared cache
         self.update_dfmods(mod_path);
+
+        // Refresh downloads list
+        self.refresh_downloads();
     }
 
     /// Update the conflicts tab using cached conflict summary
@@ -1137,5 +1283,242 @@ impl ConflictPanel {
                 notebook.set_tab_label(&page, Some(&label));
             }
         }
+
+        // Refresh downloads list (downloads are global, not per-mod)
+        self.refresh_downloads();
     }
+
+    /// Scan the downloads directory and populate the downloads list
+    pub fn refresh_downloads(&self) {
+        if let Some(model) = self.downloads_model.borrow().as_ref() {
+            model.remove_all();
+
+            let Some(download_dir) = downloads_dir() else {
+                log::warn!("Could not determine downloads directory");
+                return;
+            };
+
+            if !download_dir.exists() {
+                log::debug!("Downloads directory does not exist: {:?}", download_dir);
+                return;
+            }
+
+            // Find all .zip files with corresponding .meta.json
+            let mut items: Vec<(i64, DownloadItem)> = Vec::new();
+
+            if let Ok(entries) = std::fs::read_dir(&download_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map(|e| e == "zip").unwrap_or(false) {
+                        let file_name = path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string();
+
+                        // Try to read metadata file
+                        let meta_path = download_dir.join(format!("{}.meta.json", file_name));
+                        if let Ok(meta_contents) = std::fs::read_to_string(&meta_path) {
+                            if let Ok(metadata) = serde_json::from_str::<DownloadMetadata>(&meta_contents) {
+                                // Get actual file size from filesystem
+                                let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+
+                                // Extract display name from source_url or use mod_name
+                                let display_name = extract_display_name(&metadata);
+
+                                let item = DownloadItem::new(
+                                    &file_name,
+                                    &display_name,
+                                    metadata.mod_id,
+                                    metadata.file_id,
+                                    size,
+                                    metadata.downloaded_at,
+                                    path.to_str().unwrap_or(""),
+                                    &metadata.game,
+                                    metadata.version.as_deref().unwrap_or(""),
+                                    metadata.mod_name.as_deref().unwrap_or(""),
+                                    &metadata.source_url,
+                                );
+
+                                items.push((metadata.downloaded_at, item));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Sort by download time (newest first)
+            items.sort_by(|a, b| b.0.cmp(&a.0));
+
+            // Add to model
+            for (_timestamp, item) in items {
+                model.append(&item);
+            }
+
+            log::debug!("Found {} downloads", model.n_items());
+        }
+    }
+
+    /// Handle Install button click
+    fn on_install_clicked(&self, selection: &SingleSelection) {
+        let position = selection.selected();
+        if position == gtk4::INVALID_LIST_POSITION {
+            return;
+        }
+
+        let Some(item) = selection.selected_item().and_downcast::<DownloadItem>() else {
+            return;
+        };
+
+        log::info!("Installing download: {}", item.display_name());
+
+        // Get current mod path for the profile
+        let mod_path = self.current_mod_path.borrow();
+        let Some(mod_path) = mod_path.as_ref() else {
+            log::warn!("No mod path set for install");
+            return;
+        };
+
+        // Get the profile's mods folder (parent of current mod)
+        let Some(mods_folder) = mod_path.parent() else {
+            log::error!("Could not determine mods folder from path: {:?}", mod_path);
+            return;
+        };
+
+        // Determine folder name for the extracted mod
+        let folder_name = determine_mod_folder_name(&item);
+        let dest_folder = mods_folder.join(&folder_name);
+
+        if dest_folder.exists() {
+            log::warn!("Destination folder already exists: {:?}", dest_folder);
+            // For now, we'll overwrite - could add a confirmation dialog later
+        }
+
+        // Extract the archive
+        match extract_mod_archive(&item.path(), &dest_folder) {
+            Ok(()) => {
+                log::info!("Successfully installed mod to: {:?}", dest_folder);
+                // Note: The mod list will need to be refreshed by the parent window
+                // We could emit a signal here for that purpose
+            }
+            Err(e) => {
+                log::error!("Failed to extract mod archive: {}", e);
+            }
+        }
+    }
+
+    /// Handle Delete button click
+    fn on_delete_clicked(&self, selection: &SingleSelection) {
+        let position = selection.selected();
+        if position == gtk4::INVALID_LIST_POSITION {
+            return;
+        }
+
+        let Some(item) = selection.selected_item().and_downcast::<DownloadItem>() else {
+            return;
+        };
+
+        log::info!("Deleting download: {}", item.display_name());
+
+        let zip_path = item.path();
+        let meta_path = PathBuf::from(format!("{}.meta.json", zip_path.display()));
+
+        // Delete the files
+        if let Err(e) = std::fs::remove_file(&zip_path) {
+            log::error!("Failed to delete zip file: {}", e);
+            return;
+        }
+
+        // Also delete metadata file if it exists
+        if meta_path.exists() {
+            if let Err(e) = std::fs::remove_file(&meta_path) {
+                log::warn!("Failed to delete metadata file: {}", e);
+            }
+        }
+
+        // Refresh the downloads list
+        self.refresh_downloads();
+    }
+}
+
+/// Extract a display name from download metadata
+fn extract_display_name(metadata: &DownloadMetadata) -> String {
+    // Try to parse from source_url (contains original filename)
+    // URL format: https://.../Bestiary%20Linux-222-2-2-1-1708550222.zip
+    if let Some(last_segment) = metadata.source_url.split('/').last() {
+        if let Ok(decoded) = urlencoding::decode(last_segment) {
+            let name = decoded.trim_end_matches(".zip");
+            // Remove the timestamp suffix if present (last segment after dash if it's all digits)
+            if let Some(dash_pos) = name.rfind('-') {
+                let suffix = &name[dash_pos + 1..];
+                if suffix.chars().all(|c| c.is_ascii_digit()) && suffix.len() > 8 {
+                    return name[..dash_pos].to_string();
+                }
+            }
+            return name.to_string();
+        }
+    }
+
+    // Fall back to mod_name if available
+    if let Some(mod_name) = &metadata.mod_name {
+        if !mod_name.is_empty() {
+            return mod_name.clone();
+        }
+    }
+
+    // Last resort: use the file name
+    metadata.file_name.clone()
+}
+
+/// Determine the folder name for an extracted mod
+fn determine_mod_folder_name(item: &DownloadItem) -> String {
+    // Try to parse from source_url (contains original Nexus filename)
+    // Format: "Bestiary Linux-222-2-2-1-1708550222.zip"
+    let source_url = item.source_url();
+    if let Some(last_segment) = source_url.split('/').last() {
+        if let Ok(decoded) = urlencoding::decode(last_segment) {
+            let name = decoded.trim_end_matches(".zip");
+            // This is already in the correct format for mod folders
+            return name.to_string();
+        }
+    }
+
+    // Fall back to constructing from metadata
+    let mod_name = if item.mod_name().is_empty() {
+        "Unknown".to_string()
+    } else {
+        item.mod_name()
+    };
+
+    let version = if item.version().is_empty() {
+        "1-0".to_string()
+    } else {
+        item.version().replace('.', "-")
+    };
+
+    let timestamp = item.downloaded_at();
+
+    format!("{}-{}-{}-{}", mod_name, item.mod_id(), version, timestamp)
+}
+
+/// Extract a mod archive to the destination folder
+fn extract_mod_archive(zip_path: &PathBuf, dest_folder: &PathBuf) -> Result<(), String> {
+    use std::fs::File;
+    use std::io::BufReader;
+
+    let file = File::open(zip_path)
+        .map_err(|e| format!("Failed to open archive: {}", e))?;
+    let reader = BufReader::new(file);
+
+    let mut archive = zip::ZipArchive::new(reader)
+        .map_err(|e| format!("Failed to read archive: {}", e))?;
+
+    // Create destination folder
+    std::fs::create_dir_all(dest_folder)
+        .map_err(|e| format!("Failed to create destination folder: {}", e))?;
+
+    // Extract all files
+    archive.extract(dest_folder)
+        .map_err(|e| format!("Failed to extract archive: {}", e))?;
+
+    Ok(())
 }

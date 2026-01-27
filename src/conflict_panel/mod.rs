@@ -1,4 +1,7 @@
+mod download_item;
 mod imp;
+
+pub use download_item::DownloadItem;
 
 use gtk4::{gio, glib};
 use gtk4::subclass::prelude::*;
@@ -37,6 +40,11 @@ impl ConflictPanel {
     /// Clear the panel (when no mod is selected)
     pub fn clear(&self) {
         self.imp().clear();
+    }
+
+    /// Refresh the downloads list
+    pub fn refresh_downloads(&self) {
+        self.imp().refresh_downloads();
     }
 }
 
