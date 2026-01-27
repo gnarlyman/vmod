@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::config;
-use crate::nexus_api::{DownloadManager, DownloadMetadata, DownloadProgress, DownloadState, NexusClient, NexusConfig};
+use crate::nexus_api::{check_existing_file, delete_existing_file, DownloadManager, DownloadMetadata, DownloadProgress, DownloadState, NexusClient, NexusConfig};
 use crate::nxm::NxmLink;
 use crate::preferences::PreferencesDialog;
 use crate::window::VmodWindow;
@@ -200,6 +200,82 @@ impl VmodApplication {
             }
         };
 
+        // Generate file name to check if it already exists
+        let file_name = format!("{}_{}_{}.zip", nxm.game, nxm.mod_id, nxm.file_id);
+
+        // Check if file already exists
+        if let Some(existing_size) = check_existing_file(&file_name) {
+            log::info!("File {} already exists ({} bytes), prompting user", file_name, existing_size);
+            Self::show_file_exists_dialog(window, nxm, api_key, key, expires, file_name, existing_size);
+            return;
+        }
+
+        // Proceed with download
+        Self::start_download(window, nxm, api_key, key, expires, file_name);
+    }
+
+    /// Show dialog when download file already exists
+    fn show_file_exists_dialog(
+        window: &Window,
+        nxm: NxmLink,
+        api_key: String,
+        key: String,
+        expires: u64,
+        file_name: String,
+        existing_size: u64,
+    ) {
+        let size_str = if existing_size < 1024 * 1024 {
+            format!("{:.1} KB", existing_size as f64 / 1024.0)
+        } else {
+            format!("{:.1} MB", existing_size as f64 / (1024.0 * 1024.0))
+        };
+
+        let dialog = gtk4::AlertDialog::builder()
+            .modal(true)
+            .message("File Already Exists")
+            .detail(format!(
+                "The file \"{}\" ({}) already exists in the downloads folder.\n\nWould you like to skip or re-download?",
+                file_name, size_str
+            ))
+            .build();
+
+        dialog.set_buttons(&["Skip", "Re-download"]);
+        dialog.set_default_button(0);
+        dialog.set_cancel_button(0);
+
+        let window_clone = window.clone();
+        dialog.choose(Some(window), gio::Cancellable::NONE, move |response| {
+            match response {
+                Ok(0) => {
+                    // Skip - user chose not to download
+                    log::info!("User skipped re-downloading {}", file_name);
+                }
+                Ok(1) => {
+                    // Re-download - delete existing file and start download
+                    log::info!("User chose to re-download {}", file_name);
+                    if let Err(e) = delete_existing_file(&file_name) {
+                        log::error!("Failed to delete existing file: {}", e);
+                        return;
+                    }
+                    Self::start_download(&window_clone, nxm, api_key, key, expires, file_name);
+                }
+                _ => {
+                    // Dialog was dismissed
+                    log::debug!("File exists dialog dismissed");
+                }
+            }
+        });
+    }
+
+    /// Start the actual download process
+    fn start_download(
+        window: &Window,
+        nxm: NxmLink,
+        api_key: String,
+        key: String,
+        expires: u64,
+        file_name: String,
+    ) {
         // Create progress dialog
         let dialog = gtk4::Window::builder()
             .title("Downloading Mod")
@@ -251,6 +327,7 @@ impl VmodApplication {
         let game = nxm.game.clone();
         let mod_id = nxm.mod_id;
         let file_id = nxm.file_id;
+        let file_name_thread = file_name.clone();
 
         // Shared state for progress updates
         let progress_state: Arc<Mutex<Option<DownloadProgress>>> = Arc::new(Mutex::new(None));
@@ -323,12 +400,9 @@ impl VmodApplication {
                 }
             });
 
-            // Generate file name
-            let file_name = format!("{}_{}_{}.zip", game, mod_id, file_id);
-
             // Create metadata
             let metadata = DownloadMetadata {
-                file_name: file_name.clone(),
+                file_name: file_name_thread.clone(),
                 mod_id,
                 file_id,
                 game: game.clone(),
@@ -340,7 +414,7 @@ impl VmodApplication {
             };
 
             // Start download
-            match download_manager.download(&links, &file_name, metadata) {
+            match download_manager.download(&links, &file_name_thread, metadata) {
                 Ok(path) => {
                     *download_result_thread.lock().unwrap() = Some(Ok(path));
                 }

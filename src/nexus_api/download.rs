@@ -8,7 +8,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use super::config::ensure_downloads_dir;
+use super::config::{downloads_dir, ensure_downloads_dir};
 use super::types::DownloadLink;
 
 const BUFFER_SIZE: usize = 8192;
@@ -346,6 +346,32 @@ impl Default for DownloadManager {
     fn default() -> Self {
         Self::new().expect("Failed to create download manager")
     }
+}
+
+/// Check if a file already exists in the downloads directory
+///
+/// Returns Some(size) if the file exists, None otherwise
+pub fn check_existing_file(file_name: &str) -> Option<u64> {
+    let download_dir = downloads_dir()?;
+    let file_path = download_dir.join(file_name);
+    file_path.metadata().ok().map(|m| m.len())
+}
+
+/// Delete an existing file from the downloads directory
+pub fn delete_existing_file(file_name: &str) -> Result<(), std::io::Error> {
+    let download_dir = downloads_dir().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "Could not determine downloads directory")
+    })?;
+    let file_path = download_dir.join(file_name);
+    if file_path.exists() {
+        std::fs::remove_file(&file_path)?;
+        // Also remove metadata file if it exists
+        let metadata_path = download_dir.join(format!("{}.meta.json", file_name));
+        if metadata_path.exists() {
+            let _ = std::fs::remove_file(&metadata_path);
+        }
+    }
+    Ok(())
 }
 
 /// Download error types
