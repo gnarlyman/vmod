@@ -234,6 +234,7 @@ impl ModListView {
         let profile_clone = profile_name_ref.clone();
         let sections_config_clone = sections_config_ref.clone();
         let profile_path_clone = profile_path_ref.clone();
+        let column_view_clone = column_view.clone();
         top_button.connect_clicked(move |_| {
             // Get selected item and find its position in the underlying model (not filtered)
             if let Some(item) = selection_clone.selected_item() {
@@ -242,7 +243,18 @@ impl ModListView {
                     model_borrow.as_ref().and_then(|m| find_item_position_in_model(m, &item))
                 };
                 if let Some(pos) = position {
+                    // Save scroll position before move
+                    let scroll_pos = column_view_clone.vadjustment().map(|adj| adj.value());
                     Self::move_mod_to_top_static(&model_clone, pos, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
+                    // Restore scroll position after GTK finishes processing
+                    if let Some(scroll_val) = scroll_pos {
+                        let cv = column_view_clone.clone();
+                        glib::idle_add_local_once(move || {
+                            if let Some(adj) = cv.vadjustment() {
+                                adj.set_value(scroll_val);
+                            }
+                        });
+                    }
                 }
             }
         });
@@ -289,6 +301,7 @@ impl ModListView {
         let profile_clone = profile_name_ref.clone();
         let sections_config_clone = sections_config_ref.clone();
         let profile_path_clone = profile_path_ref.clone();
+        let column_view_clone = column_view.clone();
         bottom_button.connect_clicked(move |_| {
             // Get selected item and find its position in the underlying model (not filtered)
             if let Some(item) = selection_clone.selected_item() {
@@ -297,7 +310,18 @@ impl ModListView {
                     model_borrow.as_ref().and_then(|m| find_item_position_in_model(m, &item))
                 };
                 if let Some(pos) = position {
+                    // Save scroll position before move
+                    let scroll_pos = column_view_clone.vadjustment().map(|adj| adj.value());
                     Self::move_mod_to_bottom_static(&model_clone, pos, &vfs_clone, &profile_clone, &selection_clone, &sections_config_clone, &profile_path_clone);
+                    // Restore scroll position after GTK finishes processing
+                    if let Some(scroll_val) = scroll_pos {
+                        let cv = column_view_clone.clone();
+                        glib::idle_add_local_once(move || {
+                            if let Some(adj) = cv.vadjustment() {
+                                adj.set_value(scroll_val);
+                            }
+                        });
+                    }
                 }
             }
         });

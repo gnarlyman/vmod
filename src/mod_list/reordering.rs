@@ -47,12 +47,16 @@ impl ModListView {
             set_item_order(&current_item, prev_order);
             set_item_order(&prev_item, current_order);
 
-            // Rebuild model sorted
-            rebuild_model_sorted(model_store);
+            // Atomic swap using splice - emits only ONE items-changed signal
+            // Remove 2 items at position-1 and insert them in swapped order
+            model_store.splice(position - 1, 2, &[current_item.clone(), prev_item.clone()]);
+
+            // Update section assignments after the swap
+            update_section_assignments(model_store);
 
             // Restore selection - find the moved item's position in the filtered selection model
-            if let Some(new_pos) = find_item_position_in_selection(selection, &current_item) {
-                selection.set_selected(new_pos);
+            if let Some(sel_pos) = find_item_position_in_selection(selection, &current_item) {
+                selection.set_selected(sel_pos);
             }
 
             // Sync section orders and save
@@ -96,12 +100,16 @@ impl ModListView {
             set_item_order(&current_item, next_order);
             set_item_order(&next_item, current_order);
 
-            // Rebuild model sorted
-            rebuild_model_sorted(model_store);
+            // Atomic swap using splice - emits only ONE items-changed signal
+            // Remove 2 items at position and insert them in swapped order
+            model_store.splice(position, 2, &[next_item.clone(), current_item.clone()]);
+
+            // Update section assignments after the swap
+            update_section_assignments(model_store);
 
             // Restore selection - find the moved item's position in the filtered selection model
-            if let Some(new_pos) = find_item_position_in_selection(selection, &current_item) {
-                selection.set_selected(new_pos);
+            if let Some(sel_pos) = find_item_position_in_selection(selection, &current_item) {
+                selection.set_selected(sel_pos);
             }
 
             // Sync section orders and save
