@@ -4,6 +4,8 @@ use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use std::cell::RefCell;
 
+use crate::widgets::tree_filter::FilterableTreeItem;
+
 mod imp {
     use super::*;
     use glib::Properties;
@@ -19,9 +21,15 @@ mod imp {
         #[property(get, set)]
         pub is_expandable: Cell<bool>,
         #[property(get, set)]
-        pub item_type: Cell<u32>, // 0=mod_root, 1=folder, 2=file
+        pub item_type: Cell<u32>, // 0=mod_root, 1=folder, 2=file, 3=dfmod
         #[property(get, set)]
         pub conflict_count: Cell<u32>,
+        /// Whether this item directly matches the current filter
+        #[property(get, set)]
+        pub matches_filter: Cell<bool>,
+        /// Whether this item is visible in filter results (self or descendant matches)
+        #[property(get, set)]
+        pub visible_in_filter: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -47,19 +55,22 @@ impl TreeItem {
             .property("is-expandable", is_expandable)
             .property("item-type", item_type)
             .property("conflict-count", 0u32)
+            .property("matches-filter", false)
+            .property("visible-in-filter", true)
             .build()
     }
 
     /// Create a mod root item (expandable, shows mod name)
     pub fn new_mod_root(mod_name: &str, mod_path: &str, conflict_count: u32) -> Self {
-        let item: Self = Object::builder()
+        Object::builder()
             .property("display-name", mod_name)
             .property("full-path", mod_path)
             .property("is-expandable", true)
             .property("item-type", 0u32)
             .property("conflict-count", conflict_count)
-            .build();
-        item
+            .property("matches-filter", false)
+            .property("visible-in-filter", true)
+            .build()
     }
 
     /// Create a folder item (expandable)
@@ -70,6 +81,8 @@ impl TreeItem {
             .property("is-expandable", true)
             .property("item-type", 1u32)
             .property("conflict-count", 0u32)
+            .property("matches-filter", false)
+            .property("visible-in-filter", true)
             .build()
     }
 
@@ -81,6 +94,8 @@ impl TreeItem {
             .property("is-expandable", false)
             .property("item-type", 2u32)
             .property("conflict-count", 0u32)
+            .property("matches-filter", false)
+            .property("visible-in-filter", true)
             .build()
     }
 
@@ -93,6 +108,38 @@ impl TreeItem {
             .property("is-expandable", true)
             .property("item-type", 3u32)
             .property("conflict-count", asset_count)
+            .property("matches-filter", false)
+            .property("visible-in-filter", true)
             .build()
+    }
+}
+
+impl FilterableTreeItem for TreeItem {
+    fn filter_text(&self) -> String {
+        self.display_name()
+    }
+
+    fn filter_path(&self) -> String {
+        self.full_path()
+    }
+
+    fn is_expandable(&self) -> bool {
+        self.is_expandable()
+    }
+
+    fn matches_filter(&self) -> bool {
+        self.matches_filter()
+    }
+
+    fn set_matches_filter(&self, matches: bool) {
+        self.set_matches_filter(matches);
+    }
+
+    fn visible_in_filter(&self) -> bool {
+        self.visible_in_filter()
+    }
+
+    fn set_visible_in_filter(&self, visible: bool) {
+        self.set_visible_in_filter(visible);
     }
 }

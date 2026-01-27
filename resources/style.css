@@ -2,3 +2,9 @@
 row.highlighted {
     box-shadow: inset 4px 0 0 0 #ff8c00;
 }
+
+/* Highlight for filter matches in Files tree */
+.filter-match {
+    font-weight: bold;
+    color: #3584e4;
+}

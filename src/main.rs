@@ -6,6 +6,7 @@ mod mod_list;
 mod mods_json_view;
 mod preferences;
 mod profile;
+mod widgets;
 mod window;
 
 use application::VmodApplication;
