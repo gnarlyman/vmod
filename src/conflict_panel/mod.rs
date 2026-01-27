@@ -41,11 +41,6 @@ impl ConflictPanel {
     pub fn clear(&self) {
         self.imp().clear();
     }
-
-    /// Refresh the downloads list
-    pub fn refresh_downloads(&self) {
-        self.imp().refresh_downloads();
-    }
 }
 
 impl Default for ConflictPanel {

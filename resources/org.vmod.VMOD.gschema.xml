@@ -26,5 +26,10 @@
       <summary>Paned position</summary>
       <description>The position of the divider between mod list and Mods.json view</description>
     </key>
+    <key name="bottom-paned-position" type="i">
+      <default>400</default>
+      <summary>Bottom paned position</summary>
+      <description>The position of the divider between conflict panel and downloads</description>
+    </key>
   </schema>
 </schemalist>

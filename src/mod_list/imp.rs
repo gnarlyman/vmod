@@ -47,6 +47,9 @@ pub struct ModListView {
     // Stored paths for reload
     pub mods_folder: RefCell<Option<PathBuf>>,
     pub game_mods_folder: RefCell<Option<PathBuf>>,
+    // Downloads panel state
+    pub downloads_model: RefCell<Option<gio::ListStore>>,
+    pub bottom_paned: RefCell<Option<Paned>>,
 }
 
 impl Default for ModListView {
@@ -77,6 +80,8 @@ impl Default for ModListView {
             profile_path: Rc::new(RefCell::new(None)),
             mods_folder: RefCell::new(None),
             game_mods_folder: RefCell::new(None),
+            downloads_model: RefCell::new(None),
+            bottom_paned: RefCell::new(None),
         }
     }
 }
