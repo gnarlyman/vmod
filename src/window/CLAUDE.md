@@ -10,4 +10,13 @@
 | #1127 | 8:30 PM | 🟣 | Profile-Based Mod Loading Integration | ~428 |
 | #1125 | 8:29 PM | ✅ | Added ModListView Reference to VmodWindow Structure | ~255 |
 | #1110 | 8:26 PM | 🔵 | VMOD Profile Management UI Implementation | ~457 |
+
+### Jan 27, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #3099 | 4:23 AM | 🔵 | Profile mods folder construction in window load_profile method | ~344 |
+| #3098 | " | 🔵 | VmodWindow structure and initialization flow | ~296 |
+| #3057 | 4:02 AM | 🔵 | Main Window Structure and Mod List Integration | ~271 |
+| #2993 | 2:56 AM | 🔵 | vmod Main Window with Profile Management UI | ~562 |
 </claude-mem-context>

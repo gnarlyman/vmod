@@ -23,6 +23,19 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #3092 | 4:14 AM | 🟣 | Added set_mods_folder() public API method | ~298 |
+| #3091 | " | 🔄 | Installation Path Refactored to Use Dedicated Profile Mods Folder | ~322 |
+| #3090 | " | ✅ | Added profile_mods_folder Field to ConflictPanel | ~229 |
+| #3089 | " | 🟣 | Added profile_mods_folder field to ConflictPanel state | ~314 |
+| #3086 | 4:08 AM | 🟣 | Refresh Button Added to Downloads Section | ~289 |
+| #3085 | 4:07 AM | 🟣 | Refresh Button Added to Downloads Panel | ~287 |
+| #3081 | " | ✅ | Simplified Folder Naming to Match Archive Filename | ~313 |
+| #3080 | " | ✅ | Initial Downloads Refresh Added to ConflictPanel Construction | ~314 |
+| #3079 | 4:06 AM | 🔵 | constructed Method Completion Point Located | ~259 |
+| #3077 | " | ⚖️ | Downloads Panel Analysis Complete - Root Causes Identified | ~484 |
+| #3056 | 4:02 AM | 🔵 | ConflictPanel Public API Includes refresh_downloads Method | ~238 |
+| #3054 | " | 🔵 | DownloadItem Data Model Found | ~244 |
+| #3024 | 3:53 AM | 🔵 | VMOD download filename format pattern identified | ~261 |
 | #2771 | 12:19 AM | 🔵 | ConflictPanel Tree View Implementation with DFMod Support | ~414 |
 | #2770 | " | 🔵 | Conflict Panel Architecture for Cached Data Display | ~245 |
 </claude-mem-context>
