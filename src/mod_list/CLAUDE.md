@@ -8,14 +8,12 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #2047 | 8:46 PM | ✅ | Debug logging removed and application rebuilt successfully | ~266 |
-| #2044 | " | ✅ | Removed debug logging from up_button click handler | ~292 |
-| #1663 | 3:15 PM | 🔵 | Filter Feature Bug Root Cause Identified | ~372 |
-| #1661 | 3:14 PM | 🔵 | Search Entry Widget Created But Not Connected | ~290 |
-| #1659 | " | 🔵 | ModListView UI Component Implementation Analysis | ~425 |
 
 ### Jan 26, 2026
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #2610 | 10:01 PM | 🔵 | VFS rebuild applies mods in load order with symlink layering | ~477 |
+| #2604 | 10:00 PM | 🔵 | Mod reordering system uses order property for position tracking and persistence | ~464 |
 | #2356 | 3:42 AM | 🔵 | Actions Column Found at Line 1186 | ~313 |
 </claude-mem-context>

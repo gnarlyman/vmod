@@ -7,5 +7,6 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #2611 | 10:02 PM | 🔵 | ModState persists load order and enabled status to mod_state.json per profile | ~467 |
 | #2364 | 3:44 AM | 🔵 | ModEntry Structure Location | ~218 |
 </claude-mem-context>
