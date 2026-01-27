@@ -432,45 +432,32 @@ impl ModsJsonView {
     ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
-            let current_priority = entry.load_priority();
-            if current_priority == 0 {
-                return;
+            let position = entry.load_priority();
+            if position == 0 {
+                return; // Already at top
             }
 
-            // Swap priorities
-            for i in 0..model_store.n_items() {
-                if let Some(obj) = model_store.item(i) {
-                    if let Ok(other_entry) = obj.downcast::<DfmodEntry>() {
-                        if other_entry.load_priority() == current_priority - 1 {
-                            entry.set_load_priority(current_priority - 1);
-                            other_entry.set_load_priority(current_priority);
-                            break;
-                        }
-                    }
-                }
+            // Get items at current and previous positions
+            let current_item = match model_store.item(position) {
+                Some(item) => item,
+                None => return,
+            };
+            let prev_item = match model_store.item(position - 1) {
+                Some(item) => item,
+                None => return,
+            };
+
+            // Swap load_priority values
+            if let Ok(prev_entry) = prev_item.clone().downcast::<DfmodEntry>() {
+                entry.set_load_priority(position - 1);
+                prev_entry.set_load_priority(position);
             }
 
-            // Re-sort the list by priority
-            let mut entries: Vec<DfmodEntry> = Vec::new();
-            for i in 0..model_store.n_items() {
-                if let Some(obj) = model_store.item(i) {
-                    if let Ok(dfmod_entry) = obj.downcast::<DfmodEntry>() {
-                        entries.push(dfmod_entry);
-                    }
-                }
-            }
-            entries.sort_by_key(|e| e.load_priority());
-
-            // Clear and re-populate in sorted order
-            model_store.remove_all();
-            for dfmod_entry in entries {
-                model_store.append(&dfmod_entry);
-            }
+            // Atomic swap using splice - emits only ONE items-changed signal
+            model_store.splice(position - 1, 2, &[current_item.clone(), prev_item.clone()]);
 
             // Restore selection at new position (moved up by 1)
-            if current_priority > 0 {
-                selection.set_selected(current_priority - 1);
-            }
+            selection.set_selected(position - 1);
         }
     }
 
@@ -481,47 +468,34 @@ impl ModsJsonView {
     ) {
         let model_borrow = model.borrow();
         if let Some(model_store) = model_borrow.as_ref() {
-            let current_priority = entry.load_priority();
-            let max_priority = model_store.n_items() - 1;
+            let position = entry.load_priority();
+            let max_position = model_store.n_items() - 1;
 
-            if current_priority >= max_priority {
-                return;
+            if position >= max_position {
+                return; // Already at bottom
             }
 
-            // Swap priorities
-            for i in 0..model_store.n_items() {
-                if let Some(obj) = model_store.item(i) {
-                    if let Ok(other_entry) = obj.downcast::<DfmodEntry>() {
-                        if other_entry.load_priority() == current_priority + 1 {
-                            entry.set_load_priority(current_priority + 1);
-                            other_entry.set_load_priority(current_priority);
-                            break;
-                        }
-                    }
-                }
+            // Get items at current and next positions
+            let current_item = match model_store.item(position) {
+                Some(item) => item,
+                None => return,
+            };
+            let next_item = match model_store.item(position + 1) {
+                Some(item) => item,
+                None => return,
+            };
+
+            // Swap load_priority values
+            if let Ok(next_entry) = next_item.clone().downcast::<DfmodEntry>() {
+                entry.set_load_priority(position + 1);
+                next_entry.set_load_priority(position);
             }
 
-            // Re-sort the list by priority
-            let mut entries: Vec<DfmodEntry> = Vec::new();
-            for i in 0..model_store.n_items() {
-                if let Some(obj) = model_store.item(i) {
-                    if let Ok(dfmod_entry) = obj.downcast::<DfmodEntry>() {
-                        entries.push(dfmod_entry);
-                    }
-                }
-            }
-            entries.sort_by_key(|e| e.load_priority());
-
-            // Clear and re-populate in sorted order
-            model_store.remove_all();
-            for dfmod_entry in entries {
-                model_store.append(&dfmod_entry);
-            }
+            // Atomic swap using splice - emits only ONE items-changed signal
+            model_store.splice(position, 2, &[next_item.clone(), current_item.clone()]);
 
             // Restore selection at new position (moved down by 1)
-            if current_priority < max_priority {
-                selection.set_selected(current_priority + 1);
-            }
+            selection.set_selected(position + 1);
         }
     }
 
