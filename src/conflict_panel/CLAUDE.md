@@ -8,4 +8,14 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #1988 | 8:25 PM | ✅ | UI Layout Changes Committed and Pushed to Repository | ~373 |
+
+### Jan 26, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #2740 | 11:32 PM | ⚖️ | Visibility Property with Filtered Child Factory Pattern for Tree Filtering | ~568 |
+| #2729 | 11:30 PM | 🔵 | ConflictPanel TreeListModel Implementation with Files and Conflicts Tabs | ~503 |
+| #2726 | 11:29 PM | 🔵 | Files Tab Implementation Uses TreeListModel with Lazy Loading | ~211 |
+| #2717 | " | 🔵 | ConflictPanel Implements TreeListModel with TreeExpander Pattern | ~474 |
+| #2712 | 11:28 PM | 🔵 | ConflictPanel Widget Structure and API | ~347 |
 </claude-mem-context>

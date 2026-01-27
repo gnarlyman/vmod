@@ -28,4 +28,11 @@
 | #1682 | 3:46 PM | 🔴 | Simplified highlight styling by removing border and selection overrides | ~321 |
 | #1681 | 3:45 PM | 🔴 | Replaced GTK theme variables with hardcoded colors for highlight styling | ~324 |
 | #1678 | 3:44 PM | 🔴 | Improved dfmod highlight styling to distinguish from selection state | ~368 |
+
+### Jan 26, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #2724 | 11:29 PM | 🔵 | VMOD Main Window UI Structure | ~360 |
+| #2363 | 3:43 AM | 🔵 | Window UI Definition - Minimal Template Structure | ~323 |
 </claude-mem-context>
