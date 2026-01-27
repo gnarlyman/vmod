@@ -303,12 +303,12 @@ impl ObjectImpl for ConflictPanel {
 
         self.files_list.replace(Some(files_list));
 
-        // Add tabs to notebook
+        // Add tabs to notebook (Files is default/first tab)
         let conflicts_label = Label::new(Some("Conflicts"));
         let files_label = Label::new(Some("Files"));
 
-        notebook.append_page(&conflicts_box, Some(&conflicts_label));
         notebook.append_page(&files_box, Some(&files_label));
+        notebook.append_page(&conflicts_box, Some(&conflicts_label));
 
         self.notebook.replace(Some(notebook.clone()));
 
@@ -392,8 +392,8 @@ impl ConflictPanel {
                 "Conflicts".to_string()
             };
 
-            // Get the first page (conflicts tab) and update its label
-            if let Some(page) = notebook.nth_page(Some(0)) {
+            // Get the second page (conflicts tab) and update its label
+            if let Some(page) = notebook.nth_page(Some(1)) {
                 let label = Label::new(Some(&label_text));
                 notebook.set_tab_label(&page, Some(&label));
             }
@@ -448,7 +448,7 @@ impl ConflictPanel {
 
         // Reset tab labels
         if let Some(notebook) = self.notebook.borrow().as_ref() {
-            if let Some(page) = notebook.nth_page(Some(0)) {
+            if let Some(page) = notebook.nth_page(Some(1)) {
                 let label = Label::new(Some("Conflicts"));
                 notebook.set_tab_label(&page, Some(&label));
             }
