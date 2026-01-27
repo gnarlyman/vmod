@@ -4,105 +4,78 @@ A GTK4-based mod manager for Daggerfall Unity, written in Rust.
 
 ## Features
 
-### Phase 1 (Complete)
-- Modern GTK4 interface with Wayland support
-- Menu bar with File and Edit menus
-- Keyboard shortcuts (Ctrl+Q to quit, Ctrl+, for preferences)
-- Window state persistence (size and maximized state)
+- **Modern GTK4 Interface** - Native Linux support with Wayland compatibility
+- **Profile Management** - Multiple mod configurations with auto-detection of game folders
+- **Mod List Display** - Drag-and-drop reordering with virtual filesystem deployment
+- **Conflict Detection** - Visual file tree showing conflicts between mods
+- **DFMods Support** - View and manage .dfmod asset bundles with cached extraction
+- **Nexus Mods Integration** - Download mods directly via NXM protocol links
+- **Downloads Manager** - Install, delete, and manage downloaded archives
 
-### Phase 2 (Complete)
-- Profile management system
-- Profile creation with game folder selection
-- Auto-detection of launcher executable (DaggerfallUnity.x86_64)
-- Auto-initialization of Mods.json path
-- Profile dropdown selector with dynamic updates
-- Profile selection persistence across sessions
-- Full test coverage (27 tests)
+## Installation
 
-### Phase 3 (Complete)
-- Mod list display with drag-and-drop reordering
-- Virtual filesystem for mod deployment
-- Nexus Mods folder parsing with version extraction
-- Row highlighting for related dfmod entries
-- Mod file tree viewing
+### Build from Source
 
-### Phase 4 (Complete)
-- Plugin order management via Mods.json
-- Mods.json parsing and serialization
-- Title preservation from existing entries
-- Conflict detection between mods
-- Conflict panel with dual-view file tree display
+**System Dependencies:**
 
-## Build Requirements
-
-### System Dependencies
-
-**Fedora/RHEL:**
+Fedora/RHEL:
 ```bash
 sudo dnf install gtk4-devel glib2-devel
 ```
 
-**Ubuntu/Debian:**
+Ubuntu/Debian:
 ```bash
 sudo apt install libgtk-4-dev libglib2.0-dev
 ```
 
-**Arch:**
+Arch:
 ```bash
 sudo pacman -S gtk4
 ```
 
-### Rust
-
-Install Rust via [rustup](https://rustup.rs/):
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-## Building
-
+**Build:**
 ```bash
 # Compile GSettings schema (required for development)
 glib-compile-schemas resources/
 
-# Build the project
-cargo build
+# Build release binary
+cargo build --release
 
-# Run the application
-cargo run
+# Run
+./target/release/vmod
 ```
+
+## Usage
+
+1. **Create a Profile** - Select your Daggerfall Unity game folder
+2. **Add Mods** - Place mod folders in the profile's mods directory or download via Nexus
+3. **Reorder** - Drag mods to set load order (lower = higher priority)
+4. **Check Conflicts** - Use the conflict panel to review file overwrites
+5. **Apply Changes** - Deploy to the game's virtual filesystem
+
+### Nexus Mods Integration
+
+VMOD registers as an NXM protocol handler. Click "Download with Manager" on Nexus Mods to automatically download and queue mods for installation.
 
 ## Project Structure
 
 ```
 vmod/
-├── Cargo.toml              # Project manifest
-├── build.rs                # GResource compilation
-├── resources/              # GTK resources
-│   ├── resources.gresource.xml   # Resource bundle
-│   ├── window.ui           # Main window template
-│   ├── menu.ui             # Menu definition
-│   └── org.vmod.VMOD.gschema.xml  # Settings schema
-└── src/
-    ├── main.rs             # Entry point
-    ├── application.rs      # App lifecycle & actions
-    ├── config.rs           # Constants
-    ├── window/             # Main window
-    │   ├── mod.rs
-    │   └── imp.rs
-    └── preferences/        # Preferences dialog
-        ├── mod.rs
-        └── imp.rs
+├── src/
+│   ├── main.rs              # Entry point
+│   ├── application.rs       # App lifecycle, NXM handling
+│   ├── window/              # Main window
+│   ├── mod_list/            # Mod list view and UI
+│   ├── conflict_panel/      # Conflict detection UI
+│   ├── preferences/         # Settings dialog
+│   ├── nexus_api.rs         # Nexus Mods API client
+│   ├── dfmod_cache.rs       # DFMod asset caching
+│   └── tree_filter.rs       # Reusable tree search
+└── resources/
+    ├── window.ui            # GTK templates
+    └── *.gschema.xml        # Settings schema
 ```
-
-## Development Roadmap
-
-- **Phase 1** (Complete): GTK4 foundation with menu bar
-- **Phase 2** (Complete): Profile management with auto-detection
-- **Phase 3** (Complete): Mod list display and virtual filesystem
-- **Phase 4** (Complete): Plugin order management and conflict detection
-- **Phase 5**: Download manager with Nexus integration
 
 ## License
 
-TBD
+MIT
