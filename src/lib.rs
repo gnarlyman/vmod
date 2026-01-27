@@ -7,3 +7,4 @@ pub mod mod_list;
 pub mod mods_json_view;
 pub mod conflict_panel;
 pub mod nexus_api;
+pub mod running_panel;

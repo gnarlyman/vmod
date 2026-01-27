@@ -7,5 +7,6 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #3099 | 4:23 AM | 🔵 | Profile mods folder construction in window load_profile method | ~344 |
+| #3168 | 4:13 PM | 🔵 | VmodWindow UI Hierarchy Shows RunningPanel in Wrong Location | ~502 |
+| #3167 | " | 🔵 | RunningPanel Fully Implements DFU Launcher with Process Management | ~253 |
 </claude-mem-context>

@@ -2,10 +2,11 @@ mod imp;
 
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
-use gtk4::{gio, glib, Application, Box, Button, DropDown, Label, Orientation, StringList, StringObject};
+use gtk4::{gio, glib, Application, Box, Button, DropDown, Label, Orientation, Paned, StringList, StringObject};
 
 use crate::profile::ProfileDialog;
 use crate::mod_list::ModListView;
+use crate::running_panel::RunningPanel;
 
 glib::wrapper! {
     pub struct VmodWindow(ObjectSubclass<imp::VmodWindow>)
@@ -171,10 +172,31 @@ impl VmodWindow {
             dialog.present();
         });
 
-        // Create mod list view
+        // Create main paned container for mod list and running panel
+        let main_paned = Paned::new(Orientation::Horizontal);
+        main_paned.set_wide_handle(true);
+        main_paned.set_vexpand(true);
+
+        // Create mod list view (left side)
         let mod_list_view = ModListView::new();
         self.imp().mod_list_view.replace(Some(mod_list_view.clone()));
-        content_box.append(&mod_list_view);
+
+        main_paned.set_start_child(Some(&mod_list_view));
+        main_paned.set_resize_start_child(true);
+        main_paned.set_shrink_start_child(false);
+
+        // Create running panel (right side)
+        let running_panel = RunningPanel::new();
+        self.imp().running_panel.replace(Some(running_panel.clone()));
+
+        main_paned.set_end_child(Some(&running_panel));
+        main_paned.set_resize_end_child(false);
+        main_paned.set_shrink_end_child(true);
+
+        // Store paned reference
+        self.imp().main_paned.replace(Some(main_paned.clone()));
+
+        content_box.append(&main_paned);
 
         // Load mods for active profile if one exists
         self.load_mods_for_active_profile();
@@ -303,5 +325,12 @@ impl VmodWindow {
 
         // Load mods with profile name for state persistence
         mod_list_view.load_mods(&profile_mods_folder, &game_mods_folder, &active_profile.name, mods_json_path);
+
+        // Update running panel with launcher path from profile (if available)
+        if let Some(running_panel) = self.imp().running_panel.borrow().as_ref() {
+            if let Some(launcher_path) = &active_profile.launcher_path {
+                running_panel.set_launcher(launcher_path.clone());
+            }
+        }
     }
 }

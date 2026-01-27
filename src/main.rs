@@ -9,6 +9,7 @@ mod nexus_api;
 mod nxm;
 mod preferences;
 mod profile;
+mod running_panel;
 mod widgets;
 mod window;
 

@@ -1,9 +1,10 @@
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
-use gtk4::{glib, gio, CompositeTemplate, PopoverMenuBar, Box, DropDown};
+use gtk4::{glib, gio, CompositeTemplate, PopoverMenuBar, Box, DropDown, Paned};
 use std::cell::RefCell;
 
 use crate::mod_list::ModListView;
+use crate::running_panel::RunningPanel;
 
 #[derive(Debug, Default, CompositeTemplate)]
 #[template(resource = "/org/vmod/VMOD/window.ui")]
@@ -16,6 +17,8 @@ pub struct VmodWindow {
     pub settings: RefCell<Option<gio::Settings>>,
     pub profile_dropdown: RefCell<Option<DropDown>>,
     pub mod_list_view: RefCell<Option<ModListView>>,
+    pub running_panel: RefCell<Option<RunningPanel>>,
+    pub main_paned: RefCell<Option<Paned>>,
 }
 
 #[glib::object_subclass]

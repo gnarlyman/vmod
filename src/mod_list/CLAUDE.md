@@ -7,7 +7,6 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #2610 | 10:01 PM | 🔵 | VFS rebuild applies mods in load order with symlink layering | ~477 |
 | #2604 | 10:00 PM | 🔵 | Mod reordering system uses order property for position tracking and persistence | ~464 |
 | #2356 | 3:42 AM | 🔵 | Actions Column Found at Line 1186 | ~313 |
 </claude-mem-context>
