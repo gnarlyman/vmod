@@ -33,7 +33,7 @@ pub struct ModListView {
     pub settings: RefCell<Option<gio::Settings>>,
     pub conflict_panel: RefCell<Option<ConflictPanel>>,
     // Conflict scanning state
-    pub scan_button: RefCell<Option<Button>>,
+    pub refresh_button: RefCell<Option<Button>>,
     pub progress_box: RefCell<Option<Box>>,
     pub progress_bar: RefCell<Option<ProgressBar>>,
     pub progress_label: RefCell<Option<Label>>,
@@ -65,7 +65,7 @@ impl Default for ModListView {
             paned: RefCell::new(None),
             settings: RefCell::new(None),
             conflict_panel: RefCell::new(None),
-            scan_button: RefCell::new(None),
+            refresh_button: RefCell::new(None),
             progress_box: RefCell::new(None),
             progress_bar: RefCell::new(None),
             progress_label: RefCell::new(None),

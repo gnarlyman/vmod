@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use crate::mod_entry::{detect_all_conflicts, DfmodCacheKey, ModConflictSummary, ModEntry};
+use crate::mod_entry::{detect_all_conflicts, save_persistent_cache, DfmodCacheKey, ModConflictSummary, ModEntry};
 use super::imp::ModListView;
 
 /// Progress state shared between background thread and main thread
@@ -21,6 +21,34 @@ pub struct ScanProgressState {
 }
 
 impl ModListView {
+    /// Trigger conflict scan using stored UI references
+    /// Called by reload() to automatically scan after refreshing the mod list
+    pub fn trigger_conflict_scan(&self) {
+        let Some(refresh_button) = self.refresh_button.borrow().clone() else {
+            return;
+        };
+        let Some(progress_box) = self.progress_box.borrow().clone() else {
+            return;
+        };
+        let Some(progress_bar) = self.progress_bar.borrow().clone() else {
+            return;
+        };
+        let Some(progress_label) = self.progress_label.borrow().clone() else {
+            return;
+        };
+
+        Self::start_conflict_scan(
+            &self.model,
+            &self.is_scanning,
+            &self.conflict_results,
+            &self.dfmod_cache,
+            &progress_box,
+            &progress_bar,
+            &progress_label,
+            &refresh_button,
+        );
+    }
+
     /// Start async conflict scanning on a background thread
     pub fn start_conflict_scan(
         model: &RefCell<Option<gio::ListStore>>,
@@ -30,7 +58,7 @@ impl ModListView {
         progress_box: &Box,
         progress_bar: &ProgressBar,
         progress_label: &Label,
-        scan_button: &Button,
+        refresh_button: &Button,
     ) {
         // Check if already scanning
         if *is_scanning.borrow() {
@@ -57,9 +85,9 @@ impl ModListView {
             return;
         }
 
-        // Show progress UI and disable scan button
+        // Show progress UI and disable refresh button during scan
         progress_box.set_visible(true);
-        scan_button.set_sensitive(false);
+        refresh_button.set_sensitive(false);
         progress_bar.set_fraction(0.0);
         progress_label.set_text("Starting scan...");
 
@@ -104,6 +132,9 @@ impl ModListView {
                 }
             }
 
+            // Persist cache to disk for next app launch
+            save_persistent_cache();
+
             // Mark as completed
             let mut state = progress_state_thread.lock().unwrap();
             state.completed = true;
@@ -117,7 +148,7 @@ impl ModListView {
         let progress_box_clone = progress_box.clone();
         let progress_bar_clone = progress_bar.clone();
         let progress_label_clone = progress_label.clone();
-        let scan_button_clone = scan_button.clone();
+        let refresh_button_clone = refresh_button.clone();
 
         glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             let state = progress_state.lock().unwrap();
@@ -145,9 +176,9 @@ impl ModListView {
                     *conflict_results_clone.borrow_mut() = results.clone();
                 }
 
-                // Hide progress UI and re-enable scan button
+                // Hide progress UI and re-enable refresh button
                 progress_box_clone.set_visible(false);
-                scan_button_clone.set_sensitive(true);
+                refresh_button_clone.set_sensitive(true);
                 *is_scanning_clone.borrow_mut() = false;
 
                 return glib::ControlFlow::Break;

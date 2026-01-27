@@ -1,7 +1,9 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::SystemTime;
 
 /// Cache key for dfmod parsing results - tracks file identity by path, size, and mtime
@@ -24,23 +26,157 @@ impl DfmodCacheKey {
     }
 }
 
-/// Extract dfmod assets with caching support
-/// If the dfmod has already been parsed and its file hasn't changed, return cached results
+// ============================================================================
+// Persistent Disk Cache
+// ============================================================================
+
+/// Entry in the persistent disk cache - stores file identity and extracted asset paths
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DiskCacheEntry {
+    size: u64,
+    mtime_secs: i64,
+    mtime_nanos: u32,
+    asset_paths: Vec<String>,
+}
+
+/// Persistent cache stored on disk at ~/.cache/vmod/dfmod_cache.json
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct PersistentCache {
+    version: u32,
+    entries: HashMap<String, DiskCacheEntry>,
+}
+
+const CACHE_VERSION: u32 = 1;
+
+/// Global persistent cache - loaded once on first use, saved periodically
+static PERSISTENT_CACHE: std::sync::OnceLock<Mutex<PersistentCache>> = std::sync::OnceLock::new();
+
+/// Get the path to the cache file
+fn get_cache_path() -> Option<PathBuf> {
+    dirs::cache_dir().map(|d| d.join("vmod").join("dfmod_cache.json"))
+}
+
+/// Load persistent cache from disk
+fn load_persistent_cache() -> PersistentCache {
+    let Some(cache_path) = get_cache_path() else {
+        return PersistentCache::default();
+    };
+
+    if !cache_path.exists() {
+        return PersistentCache {
+            version: CACHE_VERSION,
+            entries: HashMap::new(),
+        };
+    }
+
+    match std::fs::read_to_string(&cache_path) {
+        Ok(data) => match serde_json::from_str::<PersistentCache>(&data) {
+            Ok(cache) if cache.version == CACHE_VERSION => cache,
+            _ => PersistentCache {
+                version: CACHE_VERSION,
+                entries: HashMap::new(),
+            },
+        },
+        Err(_) => PersistentCache {
+            version: CACHE_VERSION,
+            entries: HashMap::new(),
+        },
+    }
+}
+
+/// Save persistent cache to disk
+pub fn save_persistent_cache() {
+    let Some(cache_path) = get_cache_path() else {
+        return;
+    };
+
+    let cache = PERSISTENT_CACHE.get_or_init(|| Mutex::new(load_persistent_cache()));
+    let Ok(cache_guard) = cache.lock() else {
+        return;
+    };
+
+    // Create cache directory if needed
+    if let Some(parent) = cache_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    if let Ok(data) = serde_json::to_string(&*cache_guard) {
+        let _ = std::fs::write(cache_path, data);
+    }
+}
+
+/// Convert SystemTime to (secs, nanos) for serialization
+fn systemtime_to_parts(time: SystemTime) -> (i64, u32) {
+    match time.duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => (duration.as_secs() as i64, duration.subsec_nanos()),
+        Err(e) => {
+            let duration = e.duration();
+            (-(duration.as_secs() as i64), duration.subsec_nanos())
+        }
+    }
+}
+
+/// Convert (secs, nanos) back to SystemTime
+fn parts_to_systemtime(secs: i64, nanos: u32) -> SystemTime {
+    if secs >= 0 {
+        std::time::UNIX_EPOCH + std::time::Duration::new(secs as u64, nanos)
+    } else {
+        std::time::UNIX_EPOCH - std::time::Duration::new((-secs) as u64, nanos)
+    }
+}
+
+/// Extract dfmod assets with persistent disk cache support
+/// First checks the disk cache, then in-memory cache, then extracts fresh
 pub fn extract_dfmod_assets_cached(
     dfmod_path: &Path,
-    cache: &mut HashMap<DfmodCacheKey, Vec<String>>,
+    memory_cache: &mut HashMap<DfmodCacheKey, Vec<String>>,
 ) -> Vec<String> {
-    if let Some(key) = DfmodCacheKey::from_path(dfmod_path) {
-        if let Some(cached) = cache.get(&key) {
-            return cached.clone();
-        }
-        let assets = extract_dfmod_assets(dfmod_path);
-        cache.insert(key, assets.clone());
-        assets
-    } else {
-        // If we can't get metadata, just parse without caching
-        extract_dfmod_assets(dfmod_path)
+    let Some(key) = DfmodCacheKey::from_path(dfmod_path) else {
+        return extract_dfmod_assets(dfmod_path);
+    };
+
+    // Check in-memory cache first (fastest)
+    if let Some(cached) = memory_cache.get(&key) {
+        return cached.clone();
     }
+
+    // Check persistent disk cache
+    let cache = PERSISTENT_CACHE.get_or_init(|| Mutex::new(load_persistent_cache()));
+    if let Ok(cache_guard) = cache.lock() {
+        let path_key = dfmod_path.to_string_lossy().to_string();
+        if let Some(entry) = cache_guard.entries.get(&path_key) {
+            let cached_mtime = parts_to_systemtime(entry.mtime_secs, entry.mtime_nanos);
+            if entry.size == key.size && cached_mtime == key.mtime {
+                // Cache hit - store in memory cache and return
+                let assets = entry.asset_paths.clone();
+                memory_cache.insert(key, assets.clone());
+                return assets;
+            }
+        }
+    }
+
+    // Cache miss - extract fresh
+    let assets = extract_dfmod_assets(dfmod_path);
+
+    // Store in memory cache
+    memory_cache.insert(key.clone(), assets.clone());
+
+    // Store in persistent disk cache
+    if let Ok(mut cache_guard) = cache.lock() {
+        let (mtime_secs, mtime_nanos) = systemtime_to_parts(key.mtime);
+        let path_key = dfmod_path.to_string_lossy().to_string();
+        cache_guard.entries.insert(
+            path_key,
+            DiskCacheEntry {
+                size: key.size,
+                mtime_secs,
+                mtime_nanos,
+                asset_paths: assets.clone(),
+            },
+        );
+    }
+
+    assets
 }
 
 #[derive(Debug, Clone)]
@@ -102,50 +238,17 @@ fn extract_dfmod_assets_inner(dfmod_path: &Path) -> Vec<String> {
         Err(_) => return Vec::new(),
     };
 
-    let mut all_paths = Vec::new();
+    // Use the proper API: get_file_paths() returns all file paths directly
+    // This replaces the slow byte-by-byte scanning of CAB data
+    let all_paths = fs.get_file_paths();
 
-    // Extract paths from each CAB file in the bundle
-    for cab_path in fs.get_cab_path() {
-        if let Ok(data) = fs.get_file_data_by_path(&cab_path) {
-            let paths = extract_asset_paths_from_data(&data);
-            all_paths.extend(paths);
-        }
-    }
-
-    // Deduplicate while preserving order
+    // Filter to asset-like paths and deduplicate
     let mut seen = std::collections::HashSet::new();
-    all_paths.retain(|p| seen.insert(p.clone()));
-
     all_paths
-}
-
-/// Extract asset paths from serialized file data
-/// Asset paths are stored with a length prefix followed by the path string
-fn extract_asset_paths_from_data(data: &[u8]) -> Vec<String> {
-    let mut paths = Vec::new();
-
-    let mut i = 0;
-    while i < data.len().saturating_sub(4) {
-        // Read potential string length (little-endian u32)
-        let len = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]) as usize;
-
-        // Valid string length range for asset paths
-        if len >= 4 && len < 512 && i + 4 + len <= data.len() {
-            let potential_str = &data[i + 4..i + 4 + len];
-
-            // Check if it looks like a valid UTF-8 string with path-like content
-            if let Ok(s) = std::str::from_utf8(potential_str) {
-                if is_asset_path(s) {
-                    paths.push(s.to_string());
-                    i += 4 + len; // Skip past this string
-                    continue;
-                }
-            }
-        }
-        i += 1;
-    }
-
-    paths
+        .into_iter()
+        .filter(|p| is_asset_path(p))
+        .filter(|p| seen.insert(p.clone()))
+        .collect()
 }
 
 /// Check if a string looks like an asset path

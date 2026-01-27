@@ -130,6 +130,7 @@ impl ModListView {
     }
 
     /// Reload mods using stored paths (used after backup restore)
+    /// Also triggers conflict scanning to refresh dfmod data
     pub fn reload(&self) {
         let mods_folder = self.mods_folder.borrow().clone();
         let game_mods_folder = self.game_mods_folder.borrow().clone();
@@ -140,6 +141,9 @@ impl ModListView {
             (mods_folder, game_mods_folder, profile_name, mods_json_path)
         {
             self.load_mods(&mods_folder, &game_mods_folder, &profile_name, &mods_json_path);
+
+            // Trigger conflict scan to load dfmod data and gather conflicts
+            self.trigger_conflict_scan();
         }
     }
 

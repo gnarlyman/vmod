@@ -58,19 +58,15 @@ impl ModListView {
         add_section_button.set_tooltip_text(Some("Add a new collapsible section"));
         filter_row.append(&add_section_button);
 
-        // Scan Conflicts button
-        let scan_button = Button::with_label("Scan Conflicts");
-        self.scan_button.replace(Some(scan_button.clone()));
-        filter_row.append(&scan_button);
-
         // Backup button
         let backup_button = Button::with_label("Backup");
         backup_button.set_tooltip_text(Some("Create or restore mod list backups"));
         filter_row.append(&backup_button);
 
-        // Refresh button
+        // Refresh button (also triggers conflict scanning)
         let refresh_button = Button::with_label("Refresh");
-        refresh_button.set_tooltip_text(Some("Rescan mod folders"));
+        refresh_button.set_tooltip_text(Some("Rescan mod folders and detect conflicts"));
+        self.refresh_button.replace(Some(refresh_button.clone()));
         filter_row.append(&refresh_button);
 
         left_box.append(&filter_row);
@@ -369,28 +365,6 @@ impl ModListView {
                 nexus_button_clone.set_sensitive(false);
                 nexus_button_clone.set_tooltip_text(Some("Open on Nexus Mods"));
             }
-        });
-
-        // Connect scan button
-        let model_clone = model_ref.clone();
-        let is_scanning_clone = self.is_scanning.clone();
-        let conflict_results_clone = self.conflict_results.clone();
-        let dfmod_cache_clone = self.dfmod_cache.clone();
-        let progress_box_clone = progress_box.clone();
-        let progress_bar_clone = progress_bar.clone();
-        let progress_label_clone = progress_label.clone();
-        let scan_button_clone = scan_button.clone();
-        scan_button.connect_clicked(move |_| {
-            Self::start_conflict_scan(
-                &model_clone,
-                &is_scanning_clone,
-                &conflict_results_clone,
-                &dfmod_cache_clone,
-                &progress_box_clone,
-                &progress_bar_clone,
-                &progress_label_clone,
-                &scan_button_clone,
-            );
         });
 
         // Connect add section button
