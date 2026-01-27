@@ -208,7 +208,6 @@ impl DownloadManager {
                         progress.state = DownloadState::Completed;
                     }
 
-                    log::info!("Download completed: {:?}", file_path);
                     return Ok(file_path);
                 }
                 Err(e) => {

@@ -106,7 +106,7 @@ impl NexusClient {
             200 => {
                 let user: UserInfo = response.json()
                     .map_err(|e| NexusApiError::Parse(e.to_string()))?;
-                log::info!("API key validated for user: {} (premium: {})", user.name, user.is_premium);
+                log::debug!("API key validated for user: {} (premium: {})", user.name, user.is_premium);
                 Ok(ApiResponse { data: user, rate_limit })
             }
             401 => Err(NexusApiError::Unauthorized),
