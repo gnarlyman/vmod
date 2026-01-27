@@ -2,9 +2,11 @@ mod imp;
 
 use gtk4::{gio, glib};
 use gtk4::subclass::prelude::*;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
-use crate::mod_entry::ModConflictSummary;
+use crate::mod_entry::{ModConflictSummary, DfmodCacheKey};
 
 glib::wrapper! {
     pub struct ConflictPanel(ObjectSubclass<imp::ConflictPanel>)
@@ -16,6 +18,11 @@ glib::wrapper! {
 impl ConflictPanel {
     pub fn new() -> Self {
         glib::Object::builder().build()
+    }
+
+    /// Set the shared dfmod cache reference from ModListView
+    pub fn set_dfmod_cache(&self, cache: Arc<Mutex<HashMap<DfmodCacheKey, Vec<String>>>>) {
+        self.imp().shared_dfmod_cache.replace(Some(cache));
     }
 
     /// Update the panel using cached conflict data from a scan

@@ -416,6 +416,8 @@ impl ModListView {
         conflict_panel.set_margin_start(12);
         conflict_panel.set_margin_end(12);
         conflict_panel.set_margin_top(6);
+        // Pass the shared dfmod cache for the DFMods tab
+        conflict_panel.set_dfmod_cache(self.dfmod_cache.clone());
         self.conflict_panel.replace(Some(conflict_panel.clone()));
 
         // Update conflict panel when mod is selected (uses cached conflict data)

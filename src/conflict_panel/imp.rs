@@ -8,9 +8,79 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
-use crate::mod_entry::{TreeItem, get_children_at_path, ModConflictSummary};
+use crate::mod_entry::{TreeItem, get_children_at_path, ModConflictSummary, DfmodCacheKey, parse_dfmod_basic, extract_dfmod_assets_cached};
 use crate::widgets::tree_filter::{TreeFilterState, TreeFilterWidget};
+
+/// Get children at a given prefix from flat asset paths.
+///
+/// Converts flat paths like ["Assets/Textures/foo.png", "Assets/Sound/bar.wav"]
+/// into a hierarchical structure. At prefix "", returns [("Assets", "Assets", true)].
+/// At prefix "Assets", returns [("Textures", "Assets/Textures", true), ("Sound", "Assets/Sound", true)].
+///
+/// Returns Vec of (name, full_path_to_component, is_dir).
+fn get_dfmod_children_at_prefix(
+    asset_paths: &[String],
+    prefix: &str,
+) -> Vec<(String, String, bool)> {
+    use std::collections::HashSet;
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut result = Vec::new();
+
+    let prefix_with_slash = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", prefix)
+    };
+
+    for path in asset_paths {
+        // Only process paths that start with our prefix
+        let suffix = if prefix.is_empty() {
+            path.as_str()
+        } else if let Some(s) = path.strip_prefix(&prefix_with_slash) {
+            s
+        } else {
+            continue;
+        };
+
+        // Get the next component after the prefix
+        if let Some(slash_pos) = suffix.find('/') {
+            // This is a directory component
+            let name = &suffix[..slash_pos];
+            if seen.insert(name.to_string()) {
+                let full_path = if prefix.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{}/{}", prefix, name)
+                };
+                result.push((name.to_string(), full_path, true));
+            }
+        } else if !suffix.is_empty() {
+            // This is a file at this level
+            if seen.insert(suffix.to_string()) {
+                let full_path = if prefix.is_empty() {
+                    suffix.to_string()
+                } else {
+                    format!("{}/{}", prefix, suffix)
+                };
+                result.push((suffix.to_string(), full_path, false));
+            }
+        }
+    }
+
+    // Sort: directories first, then alphabetically
+    result.sort_by(|a, b| {
+        match (a.2, b.2) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.0.to_lowercase().cmp(&b.0.to_lowercase()),
+        }
+    });
+
+    result
+}
 
 pub struct ConflictPanel {
     pub notebook: RefCell<Option<Notebook>>,
@@ -32,6 +102,15 @@ pub struct ConflictPanel {
     pub files_box: RefCell<Option<Box>>,
     // Files scroll window for rebuilding
     pub files_scroll: RefCell<Option<ScrolledWindow>>,
+    // Shared dfmod cache reference from ModListView
+    pub shared_dfmod_cache: RefCell<Option<Arc<Mutex<HashMap<DfmodCacheKey, Vec<String>>>>>>,
+    // DFMods tab components
+    pub dfmods_list: RefCell<Option<ListView>>,
+    pub dfmods_model: RefCell<Option<gio::ListStore>>,
+    pub dfmods_filter_state: Rc<RefCell<TreeFilterState>>,
+    pub dfmods_filter_widget: RefCell<Option<TreeFilterWidget>>,
+    pub dfmods_box: RefCell<Option<Box>>,
+    pub dfmods_scroll: RefCell<Option<ScrolledWindow>>,
 }
 
 impl Default for ConflictPanel {
@@ -49,6 +128,13 @@ impl Default for ConflictPanel {
             filter_widget: RefCell::new(None),
             files_box: RefCell::new(None),
             files_scroll: RefCell::new(None),
+            shared_dfmod_cache: RefCell::new(None),
+            dfmods_list: RefCell::new(None),
+            dfmods_model: RefCell::new(None),
+            dfmods_filter_state: Rc::new(RefCell::new(TreeFilterState::new())),
+            dfmods_filter_widget: RefCell::new(None),
+            dfmods_box: RefCell::new(None),
+            dfmods_scroll: RefCell::new(None),
         }
     }
 }
@@ -215,11 +301,51 @@ impl ObjectImpl for ConflictPanel {
         self.files_box.replace(Some(files_box.clone()));
         self.files_scroll.replace(Some(files_scroll));
 
+        // DFMods tab
+        let dfmods_box = Box::new(Orientation::Vertical, 6);
+        dfmods_box.set_margin_start(6);
+        dfmods_box.set_margin_end(6);
+        dfmods_box.set_margin_top(6);
+
+        // Add filter widget at top of DFMods tab
+        let dfmods_filter_widget = TreeFilterWidget::new();
+        dfmods_filter_widget.set_placeholder_text(Some("Filter assets..."));
+        dfmods_box.append(&dfmods_filter_widget);
+
+        // Connect filter changes
+        let obj_clone = obj.clone();
+        dfmods_filter_widget.connect_filter_changed(move |text, show_subtrees| {
+            obj_clone.imp().on_dfmods_filter_changed(text, show_subtrees);
+        });
+
+        self.dfmods_filter_widget.replace(Some(dfmods_filter_widget));
+
+        let dfmods_scroll = ScrolledWindow::new();
+        dfmods_scroll.set_vexpand(true);
+        dfmods_scroll.set_hexpand(true);
+        dfmods_scroll.set_min_content_height(150);
+        dfmods_scroll.set_max_content_height(200);
+
+        // Create dfmods ListStore
+        let dfmods_store = gio::ListStore::new::<TreeItem>();
+        self.dfmods_model.replace(Some(dfmods_store.clone()));
+
+        // Create initial tree model and list view
+        let dfmods_list = self.create_dfmods_list_view(dfmods_store.clone());
+        dfmods_scroll.set_child(Some(&dfmods_list));
+        dfmods_box.append(&dfmods_scroll);
+
+        self.dfmods_list.replace(Some(dfmods_list));
+        self.dfmods_box.replace(Some(dfmods_box.clone()));
+        self.dfmods_scroll.replace(Some(dfmods_scroll));
+
         // Add tabs to notebook (Files is default/first tab)
         let conflicts_label = Label::new(Some("Conflicts"));
         let files_label = Label::new(Some("Files"));
+        let dfmods_label = Label::new(Some("DFMods"));
 
         notebook.append_page(&files_box, Some(&files_label));
+        notebook.append_page(&dfmods_box, Some(&dfmods_label));
         notebook.append_page(&conflicts_box, Some(&conflicts_label));
 
         self.notebook.replace(Some(notebook.clone()));
@@ -386,6 +512,173 @@ impl ConflictPanel {
         files_list
     }
 
+    /// Create the dfmods ListView with TreeListModel for displaying dfmod contents
+    fn create_dfmods_list_view(&self, dfmods_store: gio::ListStore) -> ListView {
+        // Store dfmod assets reference for the callback
+        let dfmod_assets_ref = self.dfmod_assets.clone();
+        // Store filter state for child filtering
+        let filter_state_ref = self.dfmods_filter_state.clone();
+
+        let dfmods_tree_model = TreeListModel::new(
+            dfmods_store,
+            false, // passthrough
+            false, // autoexpand (start collapsed)
+            move |item| {
+                let tree_item = item.downcast_ref::<TreeItem>().unwrap();
+                if tree_item.is_expandable() {
+                    let item_type = tree_item.item_type();
+                    let filter = filter_state_ref.borrow();
+
+                    // Handle dfmod roots (type 3) - return top-level asset paths/folders
+                    if item_type == 3 {
+                        let dfmod_key = tree_item.full_path();
+                        let assets = dfmod_assets_ref.borrow();
+                        if let Some(asset_paths) = assets.get(&dfmod_key) {
+                            // Get top-level children at root prefix
+                            let children_data = get_dfmod_children_at_prefix(asset_paths, "");
+                            if !children_data.is_empty() {
+                                let children_store = gio::ListStore::new::<TreeItem>();
+                                for (name, full_path, is_dir) in children_data {
+                                    // Apply filter if active
+                                    if filter.is_active() && !filter.is_visible(&full_path) {
+                                        continue;
+                                    }
+                                    // Store dfmod_key::path in full_path for folder lookups
+                                    let lookup_path = format!("{}::{}", dfmod_key, full_path);
+                                    let child = if is_dir {
+                                        TreeItem::new_folder(&name, &lookup_path)
+                                    } else {
+                                        TreeItem::new_file(&name, &full_path)
+                                    };
+                                    child.set_matches_filter(filter.matches(&name));
+                                    child.set_visible_in_filter(true);
+                                    children_store.append(&child);
+                                }
+                                if children_store.n_items() > 0 {
+                                    return Some(children_store.upcast());
+                                }
+                            }
+                        }
+                        return None;
+                    }
+
+                    // Handle folders (type 1) - parse dfmod_key::prefix from full_path
+                    if item_type == 1 {
+                        let lookup_path = tree_item.full_path();
+                        // Parse "dfmod_key::folder/path" format
+                        if let Some(sep_pos) = lookup_path.find("::") {
+                            let dfmod_key = &lookup_path[..sep_pos];
+                            let prefix = &lookup_path[sep_pos + 2..];
+
+                            let assets = dfmod_assets_ref.borrow();
+                            if let Some(asset_paths) = assets.get(dfmod_key) {
+                                let children_data = get_dfmod_children_at_prefix(asset_paths, prefix);
+                                if !children_data.is_empty() {
+                                    let children_store = gio::ListStore::new::<TreeItem>();
+                                    for (name, full_path, is_dir) in children_data {
+                                        // Apply filter if active
+                                        if filter.is_active() && !filter.is_visible(&full_path) {
+                                            continue;
+                                        }
+                                        // Store dfmod_key::path for nested folder lookups
+                                        let child_lookup = format!("{}::{}", dfmod_key, full_path);
+                                        let child = if is_dir {
+                                            TreeItem::new_folder(&name, &child_lookup)
+                                        } else {
+                                            TreeItem::new_file(&name, &full_path)
+                                        };
+                                        child.set_matches_filter(filter.matches(&name));
+                                        child.set_visible_in_filter(true);
+                                        children_store.append(&child);
+                                    }
+                                    if children_store.n_items() > 0 {
+                                        return Some(children_store.upcast());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    None
+                } else {
+                    None
+                }
+            },
+        );
+
+        let dfmods_selection = SingleSelection::new(Some(dfmods_tree_model));
+        dfmods_selection.set_autoselect(false);
+        dfmods_selection.set_can_unselect(true);
+
+        let dfmods_list = ListView::new(Some(dfmods_selection), None::<SignalListItemFactory>);
+        dfmods_list.set_show_separators(true);
+
+        // Set up factory for dfmods list
+        let dfmods_factory = SignalListItemFactory::new();
+        dfmods_factory.connect_setup(|_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>().unwrap();
+
+            let expander = TreeExpander::new();
+            let label = Label::new(None);
+            label.set_xalign(0.0);
+            label.set_hexpand(true);
+            expander.set_child(Some(&label));
+
+            list_item.set_child(Some(&expander));
+        });
+
+        dfmods_factory.connect_bind(|_factory, item| {
+            let list_item = item.downcast_ref::<gtk4::ListItem>().unwrap();
+            let row = list_item.item().and_downcast::<gtk4::TreeListRow>();
+
+            if let Some(row) = row {
+                let expander = list_item.child().and_downcast::<TreeExpander>().unwrap();
+                expander.set_list_row(Some(&row));
+
+                if let Some(tree_item) = row.item().and_downcast::<TreeItem>() {
+                    let label = expander.child().and_downcast::<Label>().unwrap();
+
+                    let item_type = tree_item.item_type();
+                    let display = tree_item.display_name();
+                    let asset_count = tree_item.conflict_count();
+
+                    // Format text based on type
+                    let text = if item_type == 3 && asset_count > 0 {
+                        // Dfmod root with asset count
+                        format!("{} ({} assets)", display, asset_count)
+                    } else {
+                        display
+                    };
+                    label.set_text(&text);
+
+                    // Style based on type
+                    label.remove_css_class("heading");
+                    label.remove_css_class("dim-label");
+                    label.remove_css_class("accent");
+                    label.remove_css_class("filter-match");
+
+                    if item_type == 1 {
+                        // Folder
+                        label.add_css_class("heading");
+                    } else if item_type == 2 {
+                        // File
+                        label.add_css_class("dim-label");
+                    } else if item_type == 3 {
+                        // Dfmod archive root - use accent style
+                        label.add_css_class("accent");
+                    }
+
+                    // Highlight matching items
+                    if tree_item.matches_filter() {
+                        label.add_css_class("filter-match");
+                    }
+                }
+            }
+        });
+
+        dfmods_list.set_factory(Some(&dfmods_factory));
+        dfmods_list
+    }
+
     /// Handle filter changes from the filter widget
     fn on_filter_changed(&self, text: &str, show_subtrees: bool) {
         // Update filter state
@@ -483,6 +776,84 @@ impl ConflictPanel {
         }
     }
 
+    /// Handle filter changes from the dfmods filter widget
+    fn on_dfmods_filter_changed(&self, text: &str, show_subtrees: bool) {
+        // Update filter state
+        {
+            let mut filter = self.dfmods_filter_state.borrow_mut();
+            filter.set_search(text, show_subtrees);
+
+            // Pre-compute visibility for all dfmod asset paths
+            if filter.is_active() {
+                let mut all_paths = Vec::new();
+
+                // Collect all dfmod asset paths
+                for paths in self.dfmod_assets.borrow().values() {
+                    all_paths.extend(paths.iter().cloned());
+                }
+
+                filter.compute_visibility(all_paths.iter().map(|s| s.as_str()));
+
+                // Update match count in filter widget
+                if let Some(widget) = self.dfmods_filter_widget.borrow().as_ref() {
+                    widget.set_match_count(filter.match_count());
+                }
+            }
+        }
+
+        // Rebuild the tree model to apply the filter
+        self.rebuild_dfmods_tree();
+    }
+
+    /// Rebuild the dfmods tree model to apply filter changes
+    fn rebuild_dfmods_tree(&self) {
+        if let Some(model) = self.dfmods_model.borrow().as_ref() {
+            model.remove_all();
+
+            let filter = self.dfmods_filter_state.borrow();
+            let assets = self.dfmod_assets.borrow();
+
+            if assets.is_empty() {
+                let empty = TreeItem::new("No DFMod files found", "", false, 2);
+                model.append(&empty);
+            } else {
+                for (dfmod_key, asset_paths) in assets.iter() {
+                    // Check if any assets are visible under this dfmod
+                    let has_visible = !filter.is_active()
+                        || asset_paths.iter().any(|p| filter.is_visible(p));
+
+                    if has_visible {
+                        let item = TreeItem::new_dfmod(
+                            dfmod_key,
+                            dfmod_key,
+                            asset_paths.len() as u32,
+                        );
+                        item.set_matches_filter(filter.matches(dfmod_key));
+                        item.set_visible_in_filter(true);
+                        model.append(&item);
+                    }
+                }
+
+                // If filter is active but nothing visible, show a message
+                if filter.is_active() && model.n_items() == 0 {
+                    let no_matches = TreeItem::new("No matches found", "", false, 2);
+                    model.append(&no_matches);
+                }
+            }
+        }
+
+        // Recreate the tree list view with the new model to refresh child closures
+        if let Some(dfmods_store) = self.dfmods_model.borrow().clone() {
+            let new_dfmods_list = self.create_dfmods_list_view(dfmods_store);
+
+            if let Some(scroll) = self.dfmods_scroll.borrow().as_ref() {
+                scroll.set_child(Some(&new_dfmods_list));
+            }
+
+            self.dfmods_list.replace(Some(new_dfmods_list));
+        }
+    }
+
     /// Update the panel using cached conflict data from a scan
     pub fn update_with_cached_conflicts(
         &self,
@@ -492,12 +863,19 @@ impl ConflictPanel {
         // Store mod path for tree model child creation
         self.current_mod_path.replace(Some(mod_path.clone()));
 
-        // Clear filter when switching mods
+        // Clear filters when switching mods
         {
             let mut filter = self.files_filter_state.borrow_mut();
             filter.clear();
         }
         if let Some(widget) = self.filter_widget.borrow().as_ref() {
+            widget.clear();
+        }
+        {
+            let mut filter = self.dfmods_filter_state.borrow_mut();
+            filter.clear();
+        }
+        if let Some(widget) = self.dfmods_filter_widget.borrow().as_ref() {
             widget.clear();
         }
 
@@ -506,6 +884,9 @@ impl ConflictPanel {
 
         // Update files tab (just shows folder structure, no dfmod parsing)
         self.update_files(mod_path);
+
+        // Update dfmods tab using shared cache
+        self.update_dfmods(mod_path);
     }
 
     /// Update the conflicts tab using cached conflict summary
@@ -564,8 +945,8 @@ impl ConflictPanel {
                 "Conflicts".to_string()
             };
 
-            // Get the second page (conflicts tab) and update its label
-            if let Some(page) = notebook.nth_page(Some(1)) {
+            // Get the third page (conflicts tab at index 2) and update its label
+            if let Some(page) = notebook.nth_page(Some(2)) {
                 let label = Label::new(Some(&label_text));
                 notebook.set_tab_label(&page, Some(&label));
             }
@@ -611,18 +992,107 @@ impl ConflictPanel {
         }
     }
 
+    /// Update the dfmods tab using the shared dfmod cache
+    fn update_dfmods(&self, mod_path: &PathBuf) {
+        // Clear previous dfmod data
+        self.dfmod_assets.borrow_mut().clear();
+
+        if let Some(model) = self.dfmods_model.borrow().as_ref() {
+            model.remove_all();
+
+            // Get dfmod file list (fast, no extraction)
+            match parse_dfmod_basic(mod_path) {
+                Ok(dfmod_infos) if !dfmod_infos.is_empty() => {
+                    // Get cached assets from shared cache
+                    let cache_ref = self.shared_dfmod_cache.borrow();
+
+                    let mut local_cache: HashMap<DfmodCacheKey, Vec<String>> = cache_ref
+                        .as_ref()
+                        .and_then(|c| c.lock().ok())
+                        .map(|g| (*g).clone())
+                        .unwrap_or_default();
+
+                    let mut total_assets = 0u32;
+
+                    for info in &dfmod_infos {
+                        // Build dfmod path and get cached assets
+                        let dfmod_path = mod_path.join("Mods").join(format!("{}.dfmod", info.file_name));
+                        let assets = extract_dfmod_assets_cached(&dfmod_path, &mut local_cache);
+
+                        // Store for lazy loading in tree model
+                        self.dfmod_assets.borrow_mut()
+                            .insert(info.file_name.clone(), assets.clone());
+
+                        total_assets += assets.len() as u32;
+
+                        // Create dfmod root TreeItem
+                        let item = TreeItem::new_dfmod(
+                            &info.title,
+                            &info.file_name,
+                            assets.len() as u32,
+                        );
+                        model.append(&item);
+                    }
+
+                    // Update tab label with total asset count
+                    self.update_dfmods_tab_label(total_assets);
+                }
+                _ => {
+                    let empty = TreeItem::new("No DFMod files found", "", false, 2);
+                    model.append(&empty);
+                    self.update_dfmods_tab_label(0);
+                }
+            }
+        }
+
+        // Recreate the list view to ensure fresh closures
+        if let Some(dfmods_store) = self.dfmods_model.borrow().clone() {
+            let new_dfmods_list = self.create_dfmods_list_view(dfmods_store);
+
+            if let Some(scroll) = self.dfmods_scroll.borrow().as_ref() {
+                scroll.set_child(Some(&new_dfmods_list));
+            }
+
+            self.dfmods_list.replace(Some(new_dfmods_list));
+        }
+    }
+
+    /// Update the DFMods tab label with asset count
+    fn update_dfmods_tab_label(&self, asset_count: u32) {
+        if let Some(notebook) = self.notebook.borrow().as_ref() {
+            let label_text = if asset_count > 0 {
+                format!("DFMods ({})", asset_count)
+            } else {
+                "DFMods".to_string()
+            };
+
+            // DFMods is at index 1
+            if let Some(page) = notebook.nth_page(Some(1)) {
+                let label = Label::new(Some(&label_text));
+                notebook.set_tab_label(&page, Some(&label));
+            }
+        }
+    }
+
     /// Clear the panel
     pub fn clear(&self) {
         self.current_mod_path.replace(None);
         self.conflict_data.borrow_mut().clear();
         self.dfmod_assets.borrow_mut().clear();
 
-        // Clear filter
+        // Clear filters
         {
             let mut filter = self.files_filter_state.borrow_mut();
             filter.clear();
         }
         if let Some(widget) = self.filter_widget.borrow().as_ref() {
+            widget.clear();
+        }
+        {
+            let mut filter = self.dfmods_filter_state.borrow_mut();
+            filter.clear();
+        }
+        if let Some(widget) = self.dfmods_filter_widget.borrow().as_ref() {
             widget.clear();
         }
 
@@ -638,9 +1108,21 @@ impl ConflictPanel {
             model.append(&placeholder);
         }
 
+        if let Some(model) = self.dfmods_model.borrow().as_ref() {
+            model.remove_all();
+            let placeholder = TreeItem::new("Select a mod to view DFMod contents", "", false, 2);
+            model.append(&placeholder);
+        }
+
         // Reset tab labels
         if let Some(notebook) = self.notebook.borrow().as_ref() {
+            // DFMods is at index 1
             if let Some(page) = notebook.nth_page(Some(1)) {
+                let label = Label::new(Some("DFMods"));
+                notebook.set_tab_label(&page, Some(&label));
+            }
+            // Conflicts is at index 2
+            if let Some(page) = notebook.nth_page(Some(2)) {
                 let label = Label::new(Some("Conflicts"));
                 notebook.set_tab_label(&page, Some(&label));
             }

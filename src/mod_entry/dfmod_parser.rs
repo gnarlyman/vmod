@@ -214,16 +214,14 @@ pub fn extract_dfmod_assets(dfmod_path: &Path) -> Vec<String> {
 
     match result {
         Ok(paths) => paths,
-        Err(_) => {
-            // Silently return empty for unsupported formats
-            Vec::new()
-        }
+        Err(_) => Vec::new(),
     }
 }
 
 /// Inner function for asset extraction (may panic on unsupported formats)
 fn extract_dfmod_assets_inner(dfmod_path: &Path) -> Vec<String> {
     use io_unity::unityfs::UnityFS;
+    use std::collections::HashSet;
 
     let file = match File::open(dfmod_path) {
         Ok(f) => f,
@@ -238,17 +236,44 @@ fn extract_dfmod_assets_inner(dfmod_path: &Path) -> Vec<String> {
         Err(_) => return Vec::new(),
     };
 
-    // Use the proper API: get_file_paths() returns all file paths directly
-    // This replaces the slow byte-by-byte scanning of CAB data
-    let all_paths = fs.get_file_paths();
+    // Extract asset paths by scanning CAB file binary data
+    // The fs.get_file_paths() API only returns CAB container names like "CAB-XXXXXXX",
+    // not the actual asset paths inside. We need to scan the binary data.
+    let mut all_paths = Vec::new();
+    for cab_path in fs.get_cab_path() {
+        if let Ok(data) = fs.get_file_data_by_path(&cab_path) {
+            let paths = extract_asset_paths_from_data(&data);
+            all_paths.extend(paths);
+        }
+    }
 
-    // Filter to asset-like paths and deduplicate
-    let mut seen = std::collections::HashSet::new();
+    // Deduplicate while preserving order
+    let mut seen = HashSet::new();
+    all_paths.retain(|p| seen.insert(p.clone()));
+
     all_paths
-        .into_iter()
-        .filter(|p| is_asset_path(p))
-        .filter(|p| seen.insert(p.clone()))
-        .collect()
+}
+
+/// Extract asset paths from serialized file data
+/// Asset paths are stored with a length prefix followed by the path string
+fn extract_asset_paths_from_data(data: &[u8]) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut i = 0;
+    while i < data.len().saturating_sub(4) {
+        let len = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]) as usize;
+        if len >= 4 && len < 512 && i + 4 + len <= data.len() {
+            let potential_str = &data[i + 4..i + 4 + len];
+            if let Ok(s) = std::str::from_utf8(potential_str) {
+                if is_asset_path(s) {
+                    paths.push(s.to_string());
+                    i += 4 + len;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    paths
 }
 
 /// Check if a string looks like an asset path
