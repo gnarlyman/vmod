@@ -220,6 +220,7 @@ pub fn extract_dfmod_assets(dfmod_path: &Path) -> Vec<String> {
 
 /// Inner function for asset extraction (may panic on unsupported formats)
 fn extract_dfmod_assets_inner(dfmod_path: &Path) -> Vec<String> {
+    use io_unity::unity_asset_view::UnityAssetViewer;
     use io_unity::unityfs::UnityFS;
     use std::collections::HashSet;
 
@@ -230,20 +231,45 @@ fn extract_dfmod_assets_inner(dfmod_path: &Path) -> Vec<String> {
 
     let reader = BufReader::new(file);
 
-    // Load the UnityFS bundle
-    let fs = match UnityFS::read(Box::new(reader), None) {
-        Ok(f) => f,
-        Err(_) => return Vec::new(),
-    };
+    // Use UnityAssetViewer to extract container paths directly
+    // This is faster than scanning binary data because it reads the container metadata
+    let mut viewer = UnityAssetViewer::default();
 
-    // Extract asset paths by scanning CAB file binary data
-    // The fs.get_file_paths() API only returns CAB container names like "CAB-XXXXXXX",
-    // not the actual asset paths inside. We need to scan the binary data.
-    let mut all_paths = Vec::new();
-    for cab_path in fs.get_cab_path() {
-        if let Ok(data) = fs.get_file_data_by_path(&cab_path) {
-            let paths = extract_asset_paths_from_data(&data);
-            all_paths.extend(paths);
+    // add_bundle_file handles loading the UnityFS and all its CAB files
+    if viewer
+        .add_bundle_file(Box::new(reader), dfmod_path.parent().map(|p| p.to_string_lossy().to_string()))
+        .is_err()
+    {
+        return Vec::new();
+    }
+
+    // Extract container paths - these are the actual asset paths
+    let mut all_paths: Vec<String> = viewer
+        .container_maps
+        .keys()
+        .filter(|p| is_asset_path(p))
+        .cloned()
+        .collect();
+
+    // If no container paths found, fall back to binary scanning
+    if all_paths.is_empty() {
+        // Reload the file for the fallback method
+        let file = match File::open(dfmod_path) {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        };
+        let reader = BufReader::new(file);
+
+        let fs = match UnityFS::read(Box::new(reader), None) {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        };
+
+        for cab_path in fs.get_cab_path() {
+            if let Ok(data) = fs.get_file_data_by_path(&cab_path) {
+                let paths = extract_asset_paths_from_data(&data);
+                all_paths.extend(paths);
+            }
         }
     }
 
@@ -473,5 +499,122 @@ mod tests {
         assert!(!is_asset_path("just a random string"));
         assert!(!is_asset_path("12345"));
         assert!(!is_asset_path("")); // Empty string
+    }
+
+    /// Test with a real dfmod file if available
+    /// This is marked as ignored to avoid failing in CI where dfmod files aren't available
+    #[test]
+    #[ignore]
+    fn test_real_dfmod_extraction() {
+        let test_paths = [
+            "/var/home/bazzite/.config/vmod/profiles/test/mods/ArchaeologistsGuild-2.6.1-14-2-6-1-1712582888/Mods/archaeologists.dfmod",
+            "/var/home/bazzite/.config/vmod/profiles/test/mods/Ambient Text 1.7-303-1-7-1743021606/Mods/ambienttext.dfmod",
+        ];
+
+        for path_str in &test_paths {
+            let path = std::path::Path::new(path_str);
+            if path.exists() {
+                println!("\nTesting {}", path.display());
+
+                let start = std::time::Instant::now();
+                let paths = extract_dfmod_assets(path);
+                let elapsed = start.elapsed();
+
+                println!("  Found {} asset paths in {:?}", paths.len(), elapsed);
+                for (i, p) in paths.iter().take(5).enumerate() {
+                    println!("    {}: {}", i, p);
+                }
+                if paths.len() > 5 {
+                    println!("    ... and {} more", paths.len() - 5);
+                }
+
+                // Basic assertion - should find at least some paths in a real dfmod
+                assert!(!paths.is_empty(), "Should find asset paths in {}", path_str);
+            }
+        }
+    }
+
+    /// Benchmark comparing old binary scan approach vs new container approach
+    /// This is marked as ignored for normal testing
+    #[test]
+    #[ignore]
+    fn benchmark_extraction_methods() {
+        use io_unity::unity_asset_view::UnityAssetViewer;
+        use io_unity::unityfs::UnityFS;
+        use std::collections::HashSet;
+
+        let test_path = "/var/home/bazzite/.config/vmod/profiles/test/mods/ArchaeologistsGuild-2.6.1-14-2-6-1-1712582888/Mods/archaeologists.dfmod";
+        let path = std::path::Path::new(test_path);
+
+        if !path.exists() {
+            println!("Test file not found, skipping benchmark");
+            return;
+        }
+
+        // Warm up
+        let _ = extract_dfmod_assets(path);
+
+        // Test new approach (UnityAssetViewer container lookup)
+        let iterations = 10;
+        let mut viewer_times = Vec::new();
+        let mut viewer_count = 0;
+
+        for _ in 0..iterations {
+            let file = File::open(path).unwrap();
+            let reader = BufReader::new(file);
+
+            let start = std::time::Instant::now();
+            let mut viewer = UnityAssetViewer::default();
+            if viewer
+                .add_bundle_file(
+                    Box::new(reader),
+                    path.parent().map(|p| p.to_string_lossy().to_string()),
+                )
+                .is_ok()
+            {
+                let paths: Vec<_> = viewer
+                    .container_maps
+                    .keys()
+                    .filter(|p| is_asset_path(p))
+                    .collect();
+                viewer_count = paths.len();
+            }
+            viewer_times.push(start.elapsed());
+        }
+
+        // Test old approach (binary scanning)
+        let mut scan_times = Vec::new();
+        let mut scan_count = 0;
+
+        for _ in 0..iterations {
+            let file = File::open(path).unwrap();
+            let reader = BufReader::new(file);
+
+            let start = std::time::Instant::now();
+            let fs = UnityFS::read(Box::new(reader), None).unwrap();
+
+            let mut all_paths = Vec::new();
+            for cab_path in fs.get_cab_path() {
+                if let Ok(data) = fs.get_file_data_by_path(&cab_path) {
+                    let paths = extract_asset_paths_from_data(&data);
+                    all_paths.extend(paths);
+                }
+            }
+            let mut seen = HashSet::new();
+            all_paths.retain(|p| seen.insert(p.clone()));
+            scan_count = all_paths.len();
+            scan_times.push(start.elapsed());
+        }
+
+        let viewer_avg = viewer_times.iter().sum::<std::time::Duration>() / iterations as u32;
+        let scan_avg = scan_times.iter().sum::<std::time::Duration>() / iterations as u32;
+
+        println!("\n=== Benchmark Results ({} iterations) ===", iterations);
+        println!("Container approach: {:?} avg ({} paths)", viewer_avg, viewer_count);
+        println!("Binary scan approach: {:?} avg ({} paths)", scan_avg, scan_count);
+        println!(
+            "Speedup: {:.2}x",
+            scan_avg.as_secs_f64() / viewer_avg.as_secs_f64()
+        );
     }
 }
