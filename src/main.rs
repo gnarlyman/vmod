@@ -5,6 +5,7 @@ mod logging;
 mod mod_entry;
 mod mod_list;
 mod mods_json_view;
+mod nexus_api;
 mod nxm;
 mod preferences;
 mod profile;
