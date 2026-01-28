@@ -68,7 +68,7 @@ impl VmodWindow {
         let profile_list = match crate::profile::profile_data::ProfileList::load() {
             Ok(list) => list,
             Err(e) => {
-                eprintln!("Failed to load profiles: {}", e);
+                log::error!("Failed to load profiles: {}", e);
                 crate::profile::profile_data::ProfileList::new()
             }
         };
@@ -112,7 +112,7 @@ impl VmodWindow {
             let mut profile_list = match crate::profile::profile_data::ProfileList::load() {
                 Ok(list) => list,
                 Err(e) => {
-                    eprintln!("Failed to load profiles: {}", e);
+                    log::error!("Failed to load profiles: {}", e);
                     return;
                 }
             };
@@ -125,7 +125,7 @@ impl VmodWindow {
             // Update active profile and save
             profile_list.set_active_profile(selected_index as usize);
             if let Err(e) = profile_list.save() {
-                eprintln!("Failed to save active profile: {}", e);
+                log::error!("Failed to save active profile: {}", e);
             }
 
             // Load mods for the selected profile
@@ -160,7 +160,7 @@ impl VmodWindow {
                     profile_list.add_profile(profile);
 
                     if let Err(e) = profile_list.save() {
-                        eprintln!("Failed to save profiles: {}", e);
+                        log::error!("Failed to save profiles: {}", e);
                     } else {
                         // Reload profile UI
                         window_clone.refresh_profile_ui();
@@ -207,7 +207,7 @@ impl VmodWindow {
         let profile_list = match crate::profile::profile_data::ProfileList::load() {
             Ok(list) => list,
             Err(e) => {
-                eprintln!("Failed to load profiles: {}", e);
+                log::error!("Failed to load profiles: {}", e);
                 return;
             }
         };
@@ -217,7 +217,7 @@ impl VmodWindow {
         let dropdown = match dropdown_ref.as_ref() {
             Some(d) => d,
             None => {
-                eprintln!("Profile dropdown not initialized");
+                log::error!("Profile dropdown not initialized");
                 return;
             }
         };
@@ -253,7 +253,7 @@ impl VmodWindow {
         let mut profile_list = match crate::profile::profile_data::ProfileList::load() {
             Ok(list) => list,
             Err(e) => {
-                eprintln!("Failed to load profiles: {}", e);
+                log::error!("Failed to load profiles: {}", e);
                 return;
             }
         };
@@ -262,7 +262,7 @@ impl VmodWindow {
         let mut active_profile = match profile_list.get_active_profile() {
             Some(p) => p.clone(),
             None => {
-                eprintln!("No active profile selected");
+                log::warn!("No active profile selected");
                 return;
             }
         };
@@ -270,14 +270,14 @@ impl VmodWindow {
         // Initialize mods_json_path if not set
         if active_profile.mods_json_path.is_none() {
             if let Err(e) = active_profile.initialize_mods_json() {
-                eprintln!("Failed to initialize Mods.json path: {}", e);
+                log::error!("Failed to initialize Mods.json path: {}", e);
                 return;
             }
             // Save the updated profile
             if let Some(active_idx) = profile_list.active_profile {
                 profile_list.profiles[active_idx] = active_profile.clone();
                 if let Err(e) = profile_list.save() {
-                    eprintln!("Failed to save profile with initialized Mods.json path: {}", e);
+                    log::error!("Failed to save profile with initialized Mods.json path: {}", e);
                 }
             }
         }
@@ -287,7 +287,7 @@ impl VmodWindow {
         let mod_list_view = match mod_list_ref.as_ref() {
             Some(v) => v,
             None => {
-                eprintln!("Mod list view not initialized");
+                log::error!("Mod list view not initialized");
                 return;
             }
         };
@@ -298,7 +298,7 @@ impl VmodWindow {
         let config_dir = match dirs::config_dir() {
             Some(d) => d,
             None => {
-                eprintln!("Could not find config directory");
+                log::error!("Could not find config directory");
                 return;
             }
         };
@@ -311,7 +311,7 @@ impl VmodWindow {
 
         // Create the mods folder if it doesn't exist
         if let Err(e) = std::fs::create_dir_all(&profile_mods_folder) {
-            eprintln!("Failed to create profile mods folder: {}", e);
+            log::error!("Failed to create profile mods folder: {}", e);
             return;
         }
 

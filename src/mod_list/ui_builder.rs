@@ -344,7 +344,7 @@ impl ModListView {
         folder_button.connect_clicked(move |_| {
             if let Some(mod_entry) = selection_clone.selected_item().and_then(|i| i.downcast::<ModEntry>().ok()) {
                 if let Err(e) = open::that(&mod_entry.path()) {
-                    eprintln!("Failed to open folder: {}", e);
+                    log::error!("Failed to open folder: {}", e);
                 }
             }
         });
@@ -360,7 +360,7 @@ impl ModListView {
                         let launcher = UriLauncher::new(&url);
                         launcher.launch(Some(&window), gio::Cancellable::NONE, |result| {
                             if let Err(e) = result {
-                                eprintln!("Failed to open URL: {}", e);
+                                log::error!("Failed to open URL: {}", e);
                             }
                         });
                     }

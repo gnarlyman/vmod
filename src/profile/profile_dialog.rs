@@ -132,13 +132,13 @@ impl ProfileDialog {
                             }
                             Err(err) => {
                                 // TODO: Show error dialog with validation message
-                                eprintln!("Validation error: {}", err);
+                                log::error!("Validation error: {}", err);
                             }
                         }
                     }
                     Err(err) => {
                         // TODO: Show error dialog with auto-detection error
-                        eprintln!("Auto-detection error: {}", err);
+                        log::error!("Auto-detection error: {}", err);
                     }
                 }
             }

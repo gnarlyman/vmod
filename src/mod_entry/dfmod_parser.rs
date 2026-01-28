@@ -488,18 +488,18 @@ mod tests {
         for path_str in &test_paths {
             let path = std::path::Path::new(path_str);
             if path.exists() {
-                println!("\nTesting {}", path.display());
+                log::info!("\nTesting {}", path.display());
 
                 let start = std::time::Instant::now();
                 let paths = extract_dfmod_assets(path);
                 let elapsed = start.elapsed();
 
-                println!("  Found {} asset paths in {:?}", paths.len(), elapsed);
+                log::info!("  Found {} asset paths in {:?}", paths.len(), elapsed);
                 for (i, p) in paths.iter().take(5).enumerate() {
-                    println!("    {}: {}", i, p);
+                    log::info!("    {}: {}", i, p);
                 }
                 if paths.len() > 5 {
-                    println!("    ... and {} more", paths.len() - 5);
+                    log::info!("    ... and {} more", paths.len() - 5);
                 }
 
                 // Basic assertion - should find at least some paths in a real dfmod
@@ -521,7 +521,7 @@ mod tests {
         let path = std::path::Path::new(test_path);
 
         if !path.exists() {
-            println!("Test file not found, skipping benchmark");
+            log::info!("Test file not found, skipping benchmark");
             return;
         }
 
@@ -583,10 +583,10 @@ mod tests {
         let viewer_avg = viewer_times.iter().sum::<std::time::Duration>() / iterations as u32;
         let scan_avg = scan_times.iter().sum::<std::time::Duration>() / iterations as u32;
 
-        println!("\n=== Benchmark Results ({} iterations) ===", iterations);
-        println!("Container approach: {:?} avg ({} paths)", viewer_avg, viewer_count);
-        println!("Binary scan approach: {:?} avg ({} paths)", scan_avg, scan_count);
-        println!(
+        log::info!("\n=== Benchmark Results ({} iterations) ===", iterations);
+        log::info!("Container approach: {:?} avg ({} paths)", viewer_avg, viewer_count);
+        log::info!("Binary scan approach: {:?} avg ({} paths)", scan_avg, scan_count);
+        log::info!(
             "Speedup: {:.2}x",
             scan_avg.as_secs_f64() / viewer_avg.as_secs_f64()
         );

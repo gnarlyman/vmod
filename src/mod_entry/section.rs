@@ -92,10 +92,10 @@ impl SectionsConfig {
                 Ok(content) => {
                     match serde_json::from_str(&content) {
                         Ok(config) => return config,
-                        Err(e) => eprintln!("Failed to parse sections.json: {}", e),
+                        Err(e) => log::error!("Failed to parse sections.json: {}", e),
                     }
                 }
-                Err(e) => eprintln!("Failed to read sections.json: {}", e),
+                Err(e) => log::error!("Failed to read sections.json: {}", e),
             }
         }
         Self::default()

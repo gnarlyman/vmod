@@ -123,7 +123,7 @@ impl VirtualFileSystem {
             Ok(entries) => entries,
             Err(e) => {
                 // If StreamingAssets doesn't exist yet, nothing to clear
-                eprintln!("StreamingAssets not found ({}), nothing to clear", e);
+                log::debug!("StreamingAssets not found ({}), nothing to clear", e);
                 return Ok(());
             }
         };

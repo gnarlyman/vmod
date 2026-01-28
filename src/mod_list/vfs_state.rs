@@ -16,7 +16,7 @@ pub fn rebuild_vfs_static(model: &RefCell<Option<gio::ListStore>>, vfs: &RefCell
     if let (Some(model), Some(vfs)) = (model_borrow.as_ref(), vfs_borrow.as_ref()) {
         // Clear all existing symlinks
         if let Err(e) = vfs.clear_all_symlinks() {
-            eprintln!("Failed to clear symlinks: {}", e);
+            log::error!("Failed to clear symlinks: {}", e);
             return;
         }
 
@@ -40,7 +40,7 @@ pub fn rebuild_vfs_static(model: &RefCell<Option<gio::ListStore>>, vfs: &RefCell
             if mod_entry.enabled() {
                 let mod_path = mod_entry.path();
                 if let Err(e) = vfs.enable_mod(&mod_path) {
-                    eprintln!("Failed to enable mod {}: {}", mod_entry.name(), e);
+                    log::error!("Failed to enable mod {}: {}", mod_entry.name(), e);
                 }
             }
         }
@@ -79,7 +79,7 @@ pub fn save_mod_state_static(model: &RefCell<Option<gio::ListStore>>, profile_na
 
         // Save to disk
         if let Err(e) = mod_state.save(profile_name) {
-            eprintln!("Failed to save mod state: {}", e);
+            log::error!("Failed to save mod state: {}", e);
         }
     }
 }

@@ -395,7 +395,7 @@ impl ModsJsonView {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to load Mods.json: {}", e);
+                    log::error!("Failed to load Mods.json: {}", e);
                 }
             }
         }
@@ -638,7 +638,7 @@ impl ModsJsonView {
         let path = match self.mods_json_path.borrow().as_ref() {
             Some(p) => p.clone(),
             None => {
-                eprintln!("Mods.json path not set");
+                log::error!("Mods.json path not set");
                 return;
             }
         };
@@ -647,7 +647,7 @@ impl ModsJsonView {
         let config_dir = match dirs::config_dir() {
             Some(dir) => dir.join("vmod"),
             None => {
-                eprintln!("Could not find config directory");
+                log::error!("Could not find config directory");
                 return;
             }
         };
@@ -656,13 +656,13 @@ impl ModsJsonView {
         let rules = match SortingRules::load(&rules_path) {
             Ok(rules) => rules,
             Err(e) => {
-                eprintln!("Failed to load sorting rules: {}", e);
+                log::error!("Failed to load sorting rules: {}", e);
                 return;
             }
         };
 
         if rules.rules.is_empty() {
-            eprintln!("No sorting rules found in {:?}", rules_path);
+            log::warn!("No sorting rules found in {:?}", rules_path);
             return;
         }
 
@@ -670,7 +670,7 @@ impl ModsJsonView {
         let entries = match load_mods_json(&path) {
             Ok(entries) => entries,
             Err(e) => {
-                eprintln!("Failed to load Mods.json: {}", e);
+                log::error!("Failed to load Mods.json: {}", e);
                 return;
             }
         };
@@ -679,14 +679,14 @@ impl ModsJsonView {
         let sorted_entries = match rules.apply_sort(&entries) {
             Ok(sorted) => sorted,
             Err(e) => {
-                eprintln!("Failed to sort mods: {}", e);
+                log::error!("Failed to sort mods: {}", e);
                 return;
             }
         };
 
         // Save sorted Mods.json
         if let Err(e) = save_mods_json(&path, &sorted_entries) {
-            eprintln!("Failed to save Mods.json: {}", e);
+            log::error!("Failed to save Mods.json: {}", e);
             return;
         }
 
@@ -704,7 +704,7 @@ impl ModsJsonView {
             }
         }
 
-        println!(
+        log::info!(
             "Applied sorting rules: {} mods reordered",
             sorted_entries.len()
         );

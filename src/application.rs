@@ -70,8 +70,8 @@ impl VmodApplication {
         .ok()
         {
             if source.lookup(config::APP_ID, true).is_none() {
-                eprintln!(
-                    "Warning: Schema {} not found. Run 'glib-compile-schemas resources/' first.",
+                log::warn!(
+                    "Schema {} not found. Run 'glib-compile-schemas resources/' first.",
                     config::APP_ID
                 );
             }
@@ -99,7 +99,7 @@ impl VmodApplication {
                 if let Some(config_dir) = dirs::config_dir() {
                     let profile_folder = config_dir.join("vmod");
                     if let Err(e) = open::that(&profile_folder) {
-                        eprintln!("Failed to open profile folder: {}", e);
+                        log::error!("Failed to open profile folder: {}", e);
                     }
                 }
             })
@@ -110,7 +110,7 @@ impl VmodApplication {
                 if let Ok(profile_list) = crate::profile::profile_data::ProfileList::load() {
                     if let Some(active_profile) = profile_list.get_active_profile() {
                         if let Err(e) = open::that(&active_profile.game_path) {
-                            eprintln!("Failed to open game folder: {}", e);
+                            log::error!("Failed to open game folder: {}", e);
                         }
                     }
                 }
@@ -122,7 +122,7 @@ impl VmodApplication {
                 if let Some(config_dir) = dirs::config_dir() {
                     let unity_folder = config_dir.join("unity3d/Daggerfall Workshop/Daggerfall Unity");
                     if let Err(e) = open::that(&unity_folder) {
-                        eprintln!("Failed to open Unity config folder: {}", e);
+                        log::error!("Failed to open Unity config folder: {}", e);
                     }
                 }
             })

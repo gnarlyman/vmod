@@ -19,13 +19,13 @@ impl ModListView {
     ) {
         let profile_name_opt = profile_name.borrow().clone();
         let Some(profile_name_str) = profile_name_opt else {
-            eprintln!("No profile selected");
+            log::warn!("No profile selected");
             return;
         };
 
         let profile_path_opt = profile_path.borrow().clone();
         let Some(profile_path_buf) = profile_path_opt else {
-            eprintln!("Profile path not set");
+            log::error!("Profile path not set");
             return;
         };
 
@@ -78,7 +78,7 @@ impl ModListView {
         profile_path: &PathBuf,
     ) {
         let Ok(backup_manager) = BackupManager::new(profile_name) else {
-            eprintln!("Failed to create BackupManager");
+            log::error!("Failed to create BackupManager");
             return;
         };
 
@@ -128,7 +128,7 @@ impl ModListView {
             }
 
             let Ok(manager) = BackupManager::new(&profile_name_owned) else {
-                eprintln!("Failed to create BackupManager");
+                log::error!("Failed to create BackupManager");
                 return;
             };
 
@@ -136,7 +136,7 @@ impl ModListView {
             let profile_dir = dirs::config_dir()
                 .map(|d| d.join("vmod").join("profiles").join(&profile_name_owned));
             let Some(profile_dir) = profile_dir else {
-                eprintln!("Could not find config directory");
+                log::error!("Could not find config directory");
                 return;
             };
             let mod_state_path = profile_dir.join("mod_state.json");
@@ -145,11 +145,11 @@ impl ModListView {
 
             match manager.create_backup(&backup_name, &mod_state_path, &sections_path) {
                 Ok(backup_path) => {
-                    eprintln!("Backup created at: {:?}", backup_path);
+                    log::info!("Backup created at: {:?}", backup_path);
                     popover_for_create.popdown();
                 }
                 Err(e) => {
-                    eprintln!("Failed to create backup: {}", e);
+                    log::error!("Failed to create backup: {}", e);
                 }
             }
         });
@@ -172,7 +172,7 @@ impl ModListView {
         widget: &crate::mod_list::ModListView,
     ) {
         let Ok(backup_manager) = BackupManager::new(profile_name) else {
-            eprintln!("Failed to create BackupManager");
+            log::error!("Failed to create BackupManager");
             return;
         };
 
@@ -265,7 +265,7 @@ impl ModListView {
                 let backup_name = backup_names.borrow().get(index as usize).cloned();
                 if let Some(name) = backup_name {
                     let Ok(manager) = BackupManager::new(&profile_name_for_restore) else {
-                        eprintln!("Failed to create BackupManager");
+                        log::error!("Failed to create BackupManager");
                         return;
                     };
 
@@ -273,7 +273,7 @@ impl ModListView {
                     let profile_dir = dirs::config_dir()
                         .map(|d| d.join("vmod").join("profiles").join(&profile_name_for_restore));
                     let Some(profile_dir) = profile_dir else {
-                        eprintln!("Could not find config directory");
+                        log::error!("Could not find config directory");
                         return;
                     };
                     let mod_state_dest = profile_dir.join("mod_state.json");
@@ -282,14 +282,14 @@ impl ModListView {
 
                     match manager.restore_backup(&name, &mod_state_dest, &sections_dest) {
                         Ok(()) => {
-                            eprintln!("Backup '{}' restored successfully", name);
+                            log::info!("Backup '{}' restored successfully", name);
                             popover_for_restore.popdown();
 
                             // Reload the mod list to reflect restored state
                             widget_for_restore.reload();
                         }
                         Err(e) => {
-                            eprintln!("Failed to restore backup: {}", e);
+                            log::error!("Failed to restore backup: {}", e);
                         }
                     }
                 }

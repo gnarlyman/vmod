@@ -137,14 +137,14 @@ impl ModList {
         let mut mods = Vec::new();
 
         if !mods_folder.exists() {
-            eprintln!("Mods folder does not exist: {}", mods_folder.display());
+            log::warn!("Mods folder does not exist: {}", mods_folder.display());
             return mods;
         }
 
         let entries = match std::fs::read_dir(mods_folder) {
             Ok(entries) => entries,
             Err(e) => {
-                eprintln!("Failed to read mods folder: {}", e);
+                log::error!("Failed to read mods folder: {}", e);
                 return mods;
             }
         };

@@ -14,7 +14,7 @@ impl ModListView {
         // Step 2: Save current ModsJsonView state first (preserves manual reordering)
         // Then sync with enabled mods
         if let Err(e) = self.sync_mods_json() {
-            eprintln!("Failed to sync Mods.json: {}", e);
+            log::error!("Failed to sync Mods.json: {}", e);
         }
     }
 
