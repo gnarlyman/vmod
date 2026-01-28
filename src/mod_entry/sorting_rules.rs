@@ -12,6 +12,12 @@ use std::cmp::Reverse;
 
 use super::mods_json_manager::ModsJsonEntry;
 
+/// Result of violation detection for each mod
+/// Maps normalized mod name to status: 0=Neutral, 1=Correct, 2=Wrong
+pub struct ViolationStatus {
+    pub status: HashMap<String, u8>,
+}
+
 /// A single sorting rule: "first" should load before "then"
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct SortingRule {
@@ -37,50 +43,6 @@ impl SortingRules {
 
         serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse sorting rules: {}", e))
-    }
-
-    /// Save sorting rules to a JSON file
-    pub fn save(&self, path: &Path) -> Result<(), String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config directory: {}", e))?;
-        }
-        let content = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize sorting rules: {}", e))?;
-        std::fs::write(path, content)
-            .map_err(|e| format!("Failed to write sorting rules: {}", e))
-    }
-
-    /// Remove all rules involving this mod (both as first and then)
-    pub fn remove_mod(&mut self, mod_name: &str) {
-        let normalized = normalize_name(mod_name);
-        self.rules.retain(|r|
-            normalize_name(&r.first) != normalized &&
-            normalize_name(&r.then) != normalized
-        );
-    }
-
-    /// Lock a mod's position between two neighbors.
-    /// Creates rules: above->mod and mod->below (if neighbors exist)
-    pub fn lock_position(&mut self, mod_name: &str, above: Option<&str>, below: Option<&str>) {
-        // First remove any existing rules for this mod
-        self.remove_mod(mod_name);
-
-        // Create rule: above -> mod (if above exists)
-        if let Some(above_mod) = above {
-            self.rules.push(SortingRule {
-                first: above_mod.to_string(),
-                then: mod_name.to_string(),
-            });
-        }
-
-        // Create rule: mod -> below (if below exists)
-        if let Some(below_mod) = below {
-            self.rules.push(SortingRule {
-                first: mod_name.to_string(),
-                then: below_mod.to_string(),
-            });
-        }
     }
 
     /// Apply sorting based on rules with transitive inference.
@@ -166,6 +128,88 @@ impl SortingRules {
         }
 
         Ok(result)
+    }
+
+    /// Detect which mods violate sorting rules in the given order.
+    /// Returns status for each mod:
+    /// - 0 = Neutral (not in any rule)
+    /// - 1 = Correct (in rules, all constraints satisfied)
+    /// - 2 = Wrong (violates at least one rule)
+    pub fn detect_violations(&self, entries: &[ModsJsonEntry]) -> ViolationStatus {
+        let mut status: HashMap<String, u8> = HashMap::new();
+
+        if entries.is_empty() || self.rules.is_empty() {
+            return ViolationStatus { status };
+        }
+
+        // Build name→position map from current order
+        let mut name_to_position: HashMap<String, usize> = HashMap::new();
+        for (i, entry) in entries.iter().enumerate() {
+            let normalized = normalize_name(&entry.file_name);
+            name_to_position.insert(normalized, i);
+        }
+
+        // Set of normalized names for present mods
+        let present_mods: HashSet<String> = name_to_position.keys().cloned().collect();
+
+        // Build full constraint graph from ALL rules (including missing mods)
+        let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut all_nodes: HashSet<String> = HashSet::new();
+
+        for rule in &self.rules {
+            let first_norm = normalize_name(&rule.first);
+            let then_norm = normalize_name(&rule.then);
+
+            all_nodes.insert(first_norm.clone());
+            all_nodes.insert(then_norm.clone());
+
+            graph.entry(first_norm).or_default().insert(then_norm);
+        }
+
+        // Compute transitive closure using existing function
+        let closure = compute_transitive_closure(&graph, &all_nodes);
+
+        // Filter to only present mods
+        let filtered_graph = filter_to_present(&closure, &present_mods);
+
+        // Track which mods are constrained (appear in filtered graph)
+        let mut constrained_mods: HashSet<String> = HashSet::new();
+        for (from, tos) in &filtered_graph {
+            constrained_mods.insert(from.clone());
+            for to in tos {
+                constrained_mods.insert(to.clone());
+            }
+        }
+
+        // Track which mods are violated
+        let mut violated_mods: HashSet<String> = HashSet::new();
+
+        // Check each edge: if then_pos < first_pos, first is out of place (needs to move up)
+        for (first, thens) in &filtered_graph {
+            if let Some(&first_pos) = name_to_position.get(first) {
+                for then in thens {
+                    if let Some(&then_pos) = name_to_position.get(then) {
+                        if then_pos < first_pos {
+                            // Violation: "first" should be before "then" but isn't
+                            // Only mark "first" - it's the one that needs to move up
+                            violated_mods.insert(first.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build final status map
+        for (name, _) in &name_to_position {
+            if violated_mods.contains(name) {
+                status.insert(name.clone(), 2); // Wrong
+            } else if constrained_mods.contains(name) {
+                status.insert(name.clone(), 1); // Correct
+            }
+            // Unconstrained mods are not added (default 0 = Neutral)
+        }
+
+        ViolationStatus { status }
     }
 }
 
@@ -513,5 +557,90 @@ mod tests {
         let result = rules.apply_sort(&entries).unwrap();
         // Should succeed and preserve original order
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_detect_violations_no_rules() {
+        let rules = SortingRules::default();
+        let entries = vec![make_entry("mod_a", 0), make_entry("mod_b", 1)];
+        let status = rules.detect_violations(&entries);
+        // No rules means all neutral (empty status map)
+        assert!(status.status.is_empty());
+    }
+
+    #[test]
+    fn test_detect_violations_correct_order() {
+        let rules = SortingRules {
+            rules: vec![SortingRule {
+                first: "mod_a".to_string(),
+                then: "mod_b".to_string(),
+            }],
+        };
+        // Correct order: A before B
+        let entries = vec![make_entry("mod_a", 0), make_entry("mod_b", 1)];
+        let status = rules.detect_violations(&entries);
+        // Both should be correct (1)
+        assert_eq!(status.status.get("mod_a"), Some(&1));
+        assert_eq!(status.status.get("mod_b"), Some(&1));
+    }
+
+    #[test]
+    fn test_detect_violations_wrong_order() {
+        let rules = SortingRules {
+            rules: vec![SortingRule {
+                first: "mod_a".to_string(),
+                then: "mod_b".to_string(),
+            }],
+        };
+        // Wrong order: B before A
+        let entries = vec![make_entry("mod_b", 0), make_entry("mod_a", 1)];
+        let status = rules.detect_violations(&entries);
+        // Only A is wrong (needs to move up), B is correct (in place)
+        assert_eq!(status.status.get("mod_a"), Some(&2));
+        assert_eq!(status.status.get("mod_b"), Some(&1));
+    }
+
+    #[test]
+    fn test_detect_violations_neutral_mods() {
+        let rules = SortingRules {
+            rules: vec![SortingRule {
+                first: "mod_a".to_string(),
+                then: "mod_b".to_string(),
+            }],
+        };
+        // mod_x is not in any rule
+        let entries = vec![
+            make_entry("mod_a", 0),
+            make_entry("mod_x", 1),
+            make_entry("mod_b", 2),
+        ];
+        let status = rules.detect_violations(&entries);
+        // A and B are correct, X is neutral (not in map)
+        assert_eq!(status.status.get("mod_a"), Some(&1));
+        assert_eq!(status.status.get("mod_b"), Some(&1));
+        assert_eq!(status.status.get("mod_x"), None); // Neutral = not in map
+    }
+
+    #[test]
+    fn test_detect_violations_transitive() {
+        // A→B→C chain, but B is missing
+        let rules = SortingRules {
+            rules: vec![
+                SortingRule {
+                    first: "mod_a".to_string(),
+                    then: "mod_b".to_string(),
+                },
+                SortingRule {
+                    first: "mod_b".to_string(),
+                    then: "mod_c".to_string(),
+                },
+            ],
+        };
+        // Wrong order: C before A (B is missing)
+        let entries = vec![make_entry("mod_c", 0), make_entry("mod_a", 1)];
+        let status = rules.detect_violations(&entries);
+        // Only A is wrong (needs to move up before C), C is correct
+        assert_eq!(status.status.get("mod_a"), Some(&2));
+        assert_eq!(status.status.get("mod_c"), Some(&1));
     }
 }

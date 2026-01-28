@@ -8,3 +8,14 @@ row.highlighted {
     font-weight: bold;
     color: #3584e4;
 }
+
+/* Sorting rule violation status for # column */
+.sorting-correct {
+    color: #4CAF50;
+    font-weight: bold;
+}
+
+.sorting-wrong {
+    color: #F44336;
+    font-weight: bold;
+}

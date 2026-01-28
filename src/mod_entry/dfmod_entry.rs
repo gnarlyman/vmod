@@ -22,6 +22,9 @@ mod imp {
         pub load_priority: Cell<u32>,
         #[property(get, set)]
         pub highlighted: Cell<bool>,
+        /// Sorting status: 0=Neutral (no rules), 1=Correct (green), 2=Wrong (red)
+        #[property(get, set)]
+        pub sorting_status: Cell<u8>,
     }
 
     #[glib::object_subclass]
