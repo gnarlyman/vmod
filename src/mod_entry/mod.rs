@@ -22,5 +22,5 @@ pub use mods_json_manager::{ModsJsonEntry, load_mods_json, save_mods_json};
 pub use tree_item::TreeItem;
 pub use conflict_detector::{ModConflictSummary, detect_all_conflicts, get_children_at_path};
 pub use section::{SectionHeader, SectionsConfig};
-pub use sorting_rules::SortingRules;
+pub use sorting_rules::{normalize_name, SortingRules};
 pub use backup::BackupManager;

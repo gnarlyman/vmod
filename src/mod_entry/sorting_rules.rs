@@ -39,6 +39,50 @@ impl SortingRules {
             .map_err(|e| format!("Failed to parse sorting rules: {}", e))
     }
 
+    /// Save sorting rules to a JSON file
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create config directory: {}", e))?;
+        }
+        let content = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize sorting rules: {}", e))?;
+        std::fs::write(path, content)
+            .map_err(|e| format!("Failed to write sorting rules: {}", e))
+    }
+
+    /// Remove all rules involving this mod (both as first and then)
+    pub fn remove_mod(&mut self, mod_name: &str) {
+        let normalized = normalize_name(mod_name);
+        self.rules.retain(|r|
+            normalize_name(&r.first) != normalized &&
+            normalize_name(&r.then) != normalized
+        );
+    }
+
+    /// Lock a mod's position between two neighbors.
+    /// Creates rules: above->mod and mod->below (if neighbors exist)
+    pub fn lock_position(&mut self, mod_name: &str, above: Option<&str>, below: Option<&str>) {
+        // First remove any existing rules for this mod
+        self.remove_mod(mod_name);
+
+        // Create rule: above -> mod (if above exists)
+        if let Some(above_mod) = above {
+            self.rules.push(SortingRule {
+                first: above_mod.to_string(),
+                then: mod_name.to_string(),
+            });
+        }
+
+        // Create rule: mod -> below (if below exists)
+        if let Some(below_mod) = below {
+            self.rules.push(SortingRule {
+                first: mod_name.to_string(),
+                then: below_mod.to_string(),
+            });
+        }
+    }
+
     /// Apply sorting based on rules with transitive inference.
     /// If a chain A→B→C exists and B is missing, A→C is still enforced.
     /// Uses stable topological sort with original positions as tiebreaker.
@@ -262,7 +306,7 @@ fn stable_toposort(
 
 /// Normalize a mod name for matching.
 /// Removes spaces and converts to lowercase for fuzzy matching.
-fn normalize_name(name: &str) -> String {
+pub fn normalize_name(name: &str) -> String {
     name.to_lowercase()
         .replace(" - ", "")
         .replace("- ", "")

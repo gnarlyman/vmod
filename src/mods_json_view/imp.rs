@@ -1,13 +1,13 @@
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use gtk4::{
-    gio, glib, Box, Button, CheckButton, ColumnView, ColumnViewColumn, Label, Orientation,
-    PolicyType, ScrolledWindow, SignalListItemFactory, SingleSelection,
+    gio, glib, Box, Button, CheckButton, ColumnView, ColumnViewColumn, GestureClick, Label,
+    Orientation, PolicyType, PopoverMenu, ScrolledWindow, SignalListItemFactory, SingleSelection,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
 
-use crate::mod_entry::{load_mods_json, save_mods_json, DfmodEntry, SortingRules};
+use crate::mod_entry::{load_mods_json, normalize_name, save_mods_json, DfmodEntry, SortingRules};
 
 pub struct ModsJsonView {
     pub column_view: RefCell<Option<ColumnView>>,
@@ -237,6 +237,7 @@ impl ModsJsonView {
 
     fn add_title_column(&self, column_view: &ColumnView, _settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
+        let model_ref = self.model.clone();
 
         factory.connect_setup(move |_factory, item| {
             let list_item = item
@@ -283,6 +284,86 @@ impl ModsJsonView {
                     widget = parent;
                 }
             });
+
+            // Create right-click gesture for context menu
+            let gesture = GestureClick::new();
+            gesture.set_button(3); // Secondary button (right-click)
+
+            let mod_file_name = dfmod_entry.file_name();
+            let model_for_menu = model_ref.clone();
+
+            gesture.connect_pressed(move |gesture, _n_press, x, y| {
+                // Get current position dynamically (it may have changed due to reordering)
+                let current_position = Self::find_position_by_filename(&model_for_menu, &mod_file_name);
+
+                let menu = gio::Menu::new();
+
+                // Always show "Lock Position in Chain"
+                let lock_item = gio::MenuItem::new(
+                    Some("Lock Position in Chain"),
+                    Some("sorting.lock-position"),
+                );
+                menu.append_item(&lock_item);
+
+                // Only show "Remove from Chain" if mod is in sorting rules
+                if Self::is_mod_in_chain(&mod_file_name) {
+                    let remove_item = gio::MenuItem::new(
+                        Some("Remove from Chain"),
+                        Some("sorting.remove-from-chain"),
+                    );
+                    menu.append_item(&remove_item);
+                }
+
+                // Create popover menu
+                let popover = PopoverMenu::from_model(Some(&menu));
+                if let Some(widget) = gesture.widget() {
+                    popover.set_parent(&widget);
+                }
+                popover.set_has_arrow(false);
+
+                // Position at click location
+                let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
+                popover.set_pointing_to(Some(&rect));
+
+                // Create action group for sorting actions
+                let action_group = gio::SimpleActionGroup::new();
+
+                // Lock position action
+                let lock_action = gio::SimpleAction::new("lock-position", None);
+                let mod_name_for_lock = mod_file_name.clone();
+                let model_for_lock = model_for_menu.clone();
+                let popover_for_lock = popover.clone();
+
+                lock_action.connect_activate(move |_action, _param| {
+                    // Get current position at action time (in case it changed between menu open and click)
+                    let pos = Self::find_position_by_filename(&model_for_lock, &mod_name_for_lock);
+                    if let Some(position) = pos {
+                        let (above, below) = Self::get_neighbors(&model_for_lock, position);
+                        Self::handle_lock_position(&mod_name_for_lock, above, below);
+                    }
+                    popover_for_lock.popdown();
+                });
+                action_group.add_action(&lock_action);
+
+                // Remove from chain action
+                let remove_action = gio::SimpleAction::new("remove-from-chain", None);
+                let mod_name_for_remove = mod_file_name.clone();
+                let popover_for_remove = popover.clone();
+
+                remove_action.connect_activate(move |_action, _param| {
+                    Self::handle_remove_from_chain(&mod_name_for_remove);
+                    popover_for_remove.popdown();
+                });
+                action_group.add_action(&remove_action);
+
+                popover.insert_action_group("sorting", Some(&action_group));
+                popover.popup();
+
+                // Suppress unused variable warning
+                let _ = current_position;
+            });
+
+            label.add_controller(gesture);
         });
 
         let column = ColumnViewColumn::new(Some("Title"), Some(factory));
@@ -728,5 +809,116 @@ impl ModsJsonView {
                 }
             }
         }
+    }
+
+    /// Get the path to sorting_rules.json in config directory
+    fn get_rules_path() -> Option<std::path::PathBuf> {
+        dirs::config_dir().map(|d| d.join("vmod").join("sorting_rules.json"))
+    }
+
+    /// Find the current position of a mod in the model by its filename
+    fn find_position_by_filename(
+        model: &RefCell<Option<gio::ListStore>>,
+        file_name: &str,
+    ) -> Option<u32> {
+        let model_borrow = model.borrow();
+        let model_store = model_borrow.as_ref()?;
+
+        for i in 0..model_store.n_items() {
+            if let Some(item) = model_store.item(i) {
+                if let Ok(entry) = item.downcast::<DfmodEntry>() {
+                    if entry.file_name() == file_name {
+                        return Some(i);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Get the file_name of mods above and below the given position
+    fn get_neighbors(
+        model: &RefCell<Option<gio::ListStore>>,
+        position: u32,
+    ) -> (Option<String>, Option<String>) {
+        let model_borrow = model.borrow();
+        let model_store = match model_borrow.as_ref() {
+            Some(m) => m,
+            None => return (None, None),
+        };
+
+        let above = if position > 0 {
+            model_store
+                .item(position - 1)
+                .and_then(|item| item.downcast::<DfmodEntry>().ok())
+                .map(|entry| entry.file_name())
+        } else {
+            None
+        };
+
+        let below = model_store
+            .item(position + 1)
+            .and_then(|item| item.downcast::<DfmodEntry>().ok())
+            .map(|entry| entry.file_name());
+
+        (above, below)
+    }
+
+    /// Handle locking a mod's position in the sorting chain
+    fn handle_lock_position(mod_name: &str, above: Option<String>, below: Option<String>) {
+        let rules_path = match Self::get_rules_path() {
+            Some(p) => p,
+            None => {
+                log::error!("Could not get config directory");
+                return;
+            }
+        };
+
+        let mut rules = SortingRules::load(&rules_path).unwrap_or_default();
+        rules.lock_position(mod_name, above.as_deref(), below.as_deref());
+
+        if let Err(e) = rules.save(&rules_path) {
+            log::error!("Failed to save sorting rules: {}", e);
+        } else {
+            log::info!(
+                "Locked position for {} (above: {:?}, below: {:?})",
+                mod_name,
+                above,
+                below
+            );
+        }
+    }
+
+    /// Handle removing a mod from the sorting chain
+    fn handle_remove_from_chain(mod_name: &str) {
+        let rules_path = match Self::get_rules_path() {
+            Some(p) => p,
+            None => {
+                log::error!("Could not get config directory");
+                return;
+            }
+        };
+
+        let mut rules = SortingRules::load(&rules_path).unwrap_or_default();
+        rules.remove_mod(mod_name);
+
+        if let Err(e) = rules.save(&rules_path) {
+            log::error!("Failed to save sorting rules: {}", e);
+        } else {
+            log::info!("Removed {} from sorting chain", mod_name);
+        }
+    }
+
+    /// Check if a mod is in the sorting chain
+    fn is_mod_in_chain(mod_name: &str) -> bool {
+        let rules_path = match Self::get_rules_path() {
+            Some(p) => p,
+            None => return false,
+        };
+        let rules = SortingRules::load(&rules_path).unwrap_or_default();
+        let normalized = normalize_name(mod_name);
+        rules.rules.iter().any(|r| {
+            normalize_name(&r.first) == normalized || normalize_name(&r.then) == normalized
+        })
     }
 }
