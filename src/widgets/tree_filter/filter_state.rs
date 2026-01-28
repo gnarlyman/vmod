@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn test_basic_matching() {
         let mut filter = TreeFilterState::new();
-        filter.set_search("texture", false);
+        filter.set_search("wood", false);
 
         let paths = vec![
             "mod1/textures/wood.png",
@@ -267,14 +267,14 @@ mod tests {
 
         filter.compute_visibility(paths.iter());
 
-        // Paths with "texture" should be visible
+        // Files matching "wood" should be visible
         assert!(filter.is_visible("mod1/textures/wood.png"));
-        assert!(filter.is_visible("mod1/textures/stone.png"));
         // Their parent should also be visible
         assert!(filter.is_visible("mod1/textures"));
         assert!(filter.is_visible("mod1"));
 
         // Non-matching paths should not be visible
+        assert!(!filter.is_visible("mod1/textures/stone.png"));
         assert!(!filter.is_visible("mod1/sounds/click.wav"));
         assert!(!filter.is_visible("mod1/meshes/chair.obj"));
     }

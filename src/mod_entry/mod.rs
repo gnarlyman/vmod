@@ -15,11 +15,12 @@ pub use mod_data::{ModEntry, ModList};
 pub use mod_state::ModState;
 pub use vfs::VirtualFileSystem;
 pub use dfmod_entry::DfmodEntry;
-pub use dfmod_parser::{parse_dfmod, parse_dfmod_basic, extract_dfmod_assets, extract_dfmod_assets_cached, save_persistent_cache, DfmodInfo, DfmodCacheKey};
-pub use mods_json_manager::{ModsJsonEntry, load_mods_json, save_mods_json, generate_mods_json};
+// extract_dfmod_assets is used by examples/parse_dfmod.rs
+#[allow(unused_imports)]
+pub use dfmod_parser::{parse_dfmod_basic, extract_dfmod_assets, extract_dfmod_assets_cached, save_persistent_cache, DfmodCacheKey};
+pub use mods_json_manager::{ModsJsonEntry, load_mods_json, save_mods_json};
 pub use tree_item::TreeItem;
-pub use conflict_detector::{ConflictInfo, ModConflictSummary, ConflictScanProgress, detect_conflicts, detect_all_conflicts, enumerate_mod_files, enumerate_mod_files_with_dfmod, get_children_at_path};
-pub use section::{SectionHeader, SectionData, SectionsConfig};
-pub use list_row::ListRow;
-pub use sorting_rules::{SortingRules, SortingRule};
-pub use backup::{BackupManager, BackupInfo};
+pub use conflict_detector::{ModConflictSummary, detect_all_conflicts, get_children_at_path};
+pub use section::{SectionHeader, SectionsConfig};
+pub use sorting_rules::SortingRules;
+pub use backup::BackupManager;

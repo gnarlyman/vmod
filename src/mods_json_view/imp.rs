@@ -196,7 +196,7 @@ impl WidgetImpl for ModsJsonView {}
 impl BoxImpl for ModsJsonView {}
 
 impl ModsJsonView {
-    fn add_checkbox_column(&self, column_view: &ColumnView, settings: &gio::Settings) {
+    fn add_checkbox_column(&self, column_view: &ColumnView, _settings: &gio::Settings) {
         let factory = SignalListItemFactory::new();
 
         factory.connect_setup(move |_factory, item| {

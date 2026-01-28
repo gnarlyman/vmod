@@ -22,8 +22,6 @@ pub enum DownloadState {
     Pending,
     /// Currently downloading
     Downloading,
-    /// Download paused
-    Paused,
     /// Download completed successfully
     Completed,
     /// Download failed
@@ -152,11 +150,6 @@ impl DownloadManager {
     /// Get the cancellation flag
     pub fn cancel_flag(&self) -> Arc<Mutex<bool>> {
         self.cancelled.clone()
-    }
-
-    /// Request cancellation of the current download
-    pub fn cancel(&self) {
-        *self.cancelled.lock().unwrap() = true;
     }
 
     /// Download a file from one of the provided links

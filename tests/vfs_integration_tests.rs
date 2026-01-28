@@ -1,9 +1,8 @@
 use std::fs;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 // Import from vmod lib
-use vmod::mod_entry::{ModEntry, VirtualFileSystem};
+use vmod::mod_entry::VirtualFileSystem;
 
 /// Test that VFS correctly handles load order priority
 #[test]

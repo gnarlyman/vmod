@@ -3,16 +3,12 @@ use gtk4::{
     gio, glib, Box as GtkBox, Button, Entry, FileDialog, Label, Orientation, Window,
 };
 use std::cell::RefCell;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use super::Profile;
 
 pub struct ProfileDialog {
     window: Window,
-    name_entry: Entry,
-    game_path_entry: Entry,
-    game_path: Rc<RefCell<Option<PathBuf>>>,
     result: Rc<RefCell<Option<Profile>>>,
 }
 
@@ -150,19 +146,12 @@ impl ProfileDialog {
 
         Self {
             window,
-            name_entry,
-            game_path_entry,
-            game_path,
             result,
         }
     }
 
     pub fn present(&self) {
         self.window.present();
-    }
-
-    pub fn get_result(&self) -> Option<Profile> {
-        self.result.borrow().clone()
     }
 
     pub fn connect_close<F>(&self, callback: F)

@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
-use gtk4::{glib, Label, Button, Box, Orientation, Align, Entry, PasswordEntry};
+use gtk4::{glib, Label, Button, Box, Orientation, Align, PasswordEntry};
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 

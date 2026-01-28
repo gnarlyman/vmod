@@ -86,24 +86,6 @@ impl NxmLink {
         })
     }
 
-    /// Print the parsed NXM link data to console (deprecated, use log_info)
-    pub fn print_info(&self) {
-        println!("=== NXM Link Received ===");
-        println!("Game:     {}", self.game);
-        println!("Mod ID:   {}", self.mod_id);
-        println!("File ID:  {}", self.file_id);
-        if let Some(ref key) = self.key {
-            println!("Key:      {}", key);
-        }
-        if let Some(expires) = self.expires {
-            println!("Expires:  {}", expires);
-        }
-        if let Some(user_id) = self.user_id {
-            println!("User ID:  {}", user_id);
-        }
-        println!("=========================");
-    }
-
     /// Log the parsed NXM link data using the logging system
     pub fn log_info(&self) {
         log::info!(

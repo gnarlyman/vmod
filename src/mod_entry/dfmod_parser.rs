@@ -183,8 +183,6 @@ pub fn extract_dfmod_assets_cached(
 pub struct DfmodInfo {
     pub title: String,
     pub file_name: String,
-    /// Asset paths contained in the dfmod bundle (for conflict detection)
-    pub asset_paths: Vec<String>,
 }
 
 /// Capitalize first letter of each word in a string
@@ -344,21 +342,7 @@ fn is_asset_path(s: &str) -> bool {
 ///
 /// FileName: The .dfmod filename without extension (e.g., "archaeologists")
 /// Title: Capitalized version of FileName (e.g., "Archaeologists")
-/// AssetPaths: List of asset paths contained in the dfmod (for conflict detection)
-pub fn parse_dfmod(mod_folder: &Path) -> Result<Vec<DfmodInfo>, String> {
-    parse_dfmod_with_options(mod_folder, true)
-}
-
-/// Scan mod folder for .dfmod files with option to skip asset extraction
-/// This is useful when you only need basic info and want faster performance
 pub fn parse_dfmod_basic(mod_folder: &Path) -> Result<Vec<DfmodInfo>, String> {
-    parse_dfmod_with_options(mod_folder, false)
-}
-
-fn parse_dfmod_with_options(
-    mod_folder: &Path,
-    extract_assets: bool,
-) -> Result<Vec<DfmodInfo>, String> {
     use std::fs;
 
     let mods_subfolder = mod_folder.join("Mods");
@@ -387,17 +371,9 @@ fn parse_dfmod_with_options(
             // Capitalize for title
             let title = capitalize_words(&file_name);
 
-            // Extract asset paths for conflict detection (if requested)
-            let asset_paths = if extract_assets {
-                extract_dfmod_assets(&path)
-            } else {
-                Vec::new()
-            };
-
             results.push(DfmodInfo {
                 file_name,
                 title,
-                asset_paths,
             });
         }
     }
@@ -445,8 +421,6 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].file_name, "my awesome mod");
         assert_eq!(result[0].title, "My Awesome Mod");
-        // asset_paths is empty when using parse_dfmod_basic
-        assert!(result[0].asset_paths.is_empty());
     }
 
     #[test]

@@ -6,14 +6,12 @@ use std::fs;
 #[derive(Debug, Clone)]
 pub struct BackupInfo {
     pub name: String,
-    pub path: PathBuf,
     pub created_at: SystemTime,
 }
 
 /// Manages mod list backups for a profile
 pub struct BackupManager {
     backup_dir: PathBuf,
-    profile_name: String,
 }
 
 impl BackupManager {
@@ -28,7 +26,6 @@ impl BackupManager {
 
         Ok(Self {
             backup_dir: config_dir,
-            profile_name: profile_name.to_string(),
         })
     }
 
@@ -123,7 +120,6 @@ impl BackupManager {
 
                     backups.push(BackupInfo {
                         name,
-                        path,
                         created_at,
                     });
                 }
@@ -148,11 +144,6 @@ impl BackupManager {
         // Generate timestamp-based name
         let now = chrono::Local::now();
         format!("modlist_backup_{}", now.format("%Y%m%d_%H%M%S"))
-    }
-
-    /// Get the profile name
-    pub fn profile_name(&self) -> &str {
-        &self.profile_name
     }
 }
 
@@ -192,7 +183,6 @@ mod tests {
 
         let manager = BackupManager {
             backup_dir,
-            profile_name: "test".to_string(),
         };
 
         let backups = manager.list_backups().unwrap();

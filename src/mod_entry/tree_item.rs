@@ -4,8 +4,6 @@ use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use std::cell::RefCell;
 
-use crate::widgets::tree_filter::FilterableTreeItem;
-
 mod imp {
     use super::*;
     use glib::Properties;
@@ -111,35 +109,5 @@ impl TreeItem {
             .property("matches-filter", false)
             .property("visible-in-filter", true)
             .build()
-    }
-}
-
-impl FilterableTreeItem for TreeItem {
-    fn filter_text(&self) -> String {
-        self.display_name()
-    }
-
-    fn filter_path(&self) -> String {
-        self.full_path()
-    }
-
-    fn is_expandable(&self) -> bool {
-        self.is_expandable()
-    }
-
-    fn matches_filter(&self) -> bool {
-        self.matches_filter()
-    }
-
-    fn set_matches_filter(&self, matches: bool) {
-        self.set_matches_filter(matches);
-    }
-
-    fn visible_in_filter(&self) -> bool {
-        self.visible_in_filter()
-    }
-
-    fn set_visible_in_filter(&self, visible: bool) {
-        self.set_visible_in_filter(visible);
     }
 }
