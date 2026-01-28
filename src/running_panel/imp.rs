@@ -10,6 +10,8 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -487,62 +489,83 @@ impl RunningPanel {
                     // Store child process
                     obj.imp().child_process.replace(Some(child));
 
-                    // Set up output polling
+                    // Create channel for thread communication
+                    let (sender, receiver) = mpsc::channel::<String>();
+                    let receiver = Rc::new(RefCell::new(receiver));
+
+                    // Flag to signal threads to stop
+                    let running = Arc::new(AtomicBool::new(true));
+
+                    // Spawn thread for stdout reading
+                    if let Some(stdout) = stdout {
+                        let sender_clone = sender.clone();
+                        let running_clone = running.clone();
+                        std::thread::spawn(move || {
+                            let reader = BufReader::new(stdout);
+                            for line in reader.lines() {
+                                if !running_clone.load(Ordering::Relaxed) {
+                                    break;
+                                }
+                                if let Ok(line) = line {
+                                    if sender_clone.send(format!("{}\n", line)).is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                        });
+                    }
+
+                    // Spawn thread for stderr reading
+                    if let Some(stderr) = stderr {
+                        let running_clone = running.clone();
+                        std::thread::spawn(move || {
+                            let reader = BufReader::new(stderr);
+                            for line in reader.lines() {
+                                if !running_clone.load(Ordering::Relaxed) {
+                                    break;
+                                }
+                                if let Ok(line) = line {
+                                    if sender.send(format!("[stderr] {}\n", line)).is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                        });
+                    }
+
+                    // Set up polling to check output and process status
                     let output_view_for_poll = output_view_clone.clone();
                     let status_label_for_poll = status_label_clone.clone();
                     let run_button_for_poll = run_button_clone.clone();
                     let stop_button_for_poll = stop_button_clone.clone();
                     let obj_weak_for_poll = obj.downgrade();
 
-                    // Wrap readers in Rc<RefCell> for shared access
-                    let stdout_reader: Rc<RefCell<Option<BufReader<std::process::ChildStdout>>>> =
-                        Rc::new(RefCell::new(stdout.map(BufReader::new)));
-                    let stderr_reader: Rc<RefCell<Option<BufReader<std::process::ChildStderr>>>> =
-                        Rc::new(RefCell::new(stderr.map(BufReader::new)));
-
                     let source_id = glib::timeout_add_local(
-                        std::time::Duration::from_millis(100),
+                        std::time::Duration::from_millis(50),
                         move || {
                             let obj = match obj_weak_for_poll.upgrade() {
                                 Some(o) => o,
-                                None => return glib::ControlFlow::Break,
+                                None => {
+                                    running.store(false, Ordering::Relaxed);
+                                    return glib::ControlFlow::Break;
+                                }
                             };
 
+                            // Non-blocking receive of output from threads
                             let buffer = output_view_for_poll.buffer();
-
-                            // Read available stdout
-                            if let Some(reader) = stdout_reader.borrow_mut().as_mut() {
-                                let mut line = String::new();
-                                while let Ok(n) = reader.read_line(&mut line) {
-                                    if n == 0 {
-                                        break;
-                                    }
-                                    let mut end = buffer.end_iter();
-                                    buffer.insert(&mut end, &line);
-                                    line.clear();
-
-                                    // Only read a few lines per tick to avoid blocking
-                                    if buffer.char_count() > 100000 {
-                                        break;
-                                    }
-                                }
+                            let receiver_ref = receiver.borrow();
+                            let mut got_output = false;
+                            while let Ok(text) = receiver_ref.try_recv() {
+                                let mut end = buffer.end_iter();
+                                buffer.insert(&mut end, &text);
+                                got_output = true;
                             }
 
-                            // Read available stderr
-                            if let Some(reader) = stderr_reader.borrow_mut().as_mut() {
-                                let mut line = String::new();
-                                while let Ok(n) = reader.read_line(&mut line) {
-                                    if n == 0 {
-                                        break;
-                                    }
-                                    let mut end = buffer.end_iter();
-                                    buffer.insert(&mut end, &format!("[stderr] {}", line));
-                                    line.clear();
-
-                                    if buffer.char_count() > 100000 {
-                                        break;
-                                    }
-                                }
+                            // Auto-scroll to bottom if we got output
+                            if got_output {
+                                let end = buffer.end_iter();
+                                let mark = buffer.create_mark(None, &end, false);
+                                output_view_for_poll.scroll_to_mark(&mark, 0.0, false, 0.0, 0.0);
                             }
 
                             // Check if process has exited
@@ -550,7 +573,15 @@ impl RunningPanel {
                             if let Some(ref mut child) = *child_ref {
                                 match child.try_wait() {
                                     Ok(Some(status)) => {
-                                        // Process exited
+                                        // Process exited - drain remaining output
+                                        drop(receiver_ref);
+                                        let receiver_ref = receiver.borrow();
+                                        while let Ok(text) = receiver_ref.try_recv() {
+                                            let mut end = buffer.end_iter();
+                                            buffer.insert(&mut end, &text);
+                                        }
+
+                                        running.store(false, Ordering::Relaxed);
                                         status_label_for_poll.set_text(&format!(
                                             "Status: Exited ({})",
                                             status
@@ -572,13 +603,9 @@ impl RunningPanel {
                                 }
                             } else {
                                 // No child process
+                                running.store(false, Ordering::Relaxed);
                                 return glib::ControlFlow::Break;
                             }
-
-                            // Auto-scroll to bottom
-                            let end = buffer.end_iter();
-                            let mark = buffer.create_mark(None, &end, false);
-                            output_view_for_poll.scroll_to_mark(&mark, 0.0, false, 0.0, 0.0);
 
                             glib::ControlFlow::Continue
                         },
