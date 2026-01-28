@@ -2,6 +2,8 @@
 
 A GTK4-based mod manager for Daggerfall Unity, written in Rust.
 
+![VMOD Screenshot](docs/screenshot.png)
+
 ## Features
 
 - **Modern GTK4 Interface** - Native Linux support with Wayland compatibility
