@@ -20,6 +20,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev build-essential
 
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
       - name: Build release binary
         run: cargo build --release
 
