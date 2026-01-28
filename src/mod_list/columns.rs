@@ -3,12 +3,13 @@
 use gtk4::prelude::*;
 use gtk4::{
     gio, glib, Box, Button, CheckButton, ColumnView, ColumnViewColumn, EditableLabel,
-    EventControllerMotion, FilterChange, Label, Orientation, SignalListItemFactory,
+    EventControllerMotion, FilterChange, GestureClick, Label, Orientation, PopoverMenu,
+    SignalListItemFactory,
 };
 
 use crate::mod_entry::{ModEntry, SectionHeader};
 use super::imp::ModListView;
-use super::reordering::remove_section_static;
+use super::reordering::{move_mod_to_section_static, remove_section_static};
 use super::vfs_state::save_mod_state_static;
 
 impl ModListView {
@@ -179,6 +180,7 @@ impl ModListView {
         let profile_path_ref = self.profile_path.clone();
         let model_ref = self.model.clone();
         let filter_ref = self.filter.clone();
+        let profile_name_ref = self.profile_name.clone();
 
         factory.connect_bind(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
@@ -274,9 +276,86 @@ impl ModListView {
 
                 container.append(&label);
 
+                // Create right-click gesture for context menu
+                let gesture = GestureClick::new();
+                gesture.set_button(3); // Secondary button (right-click)
+
+                // Clone refs needed for the gesture closure
+                let sections_config_for_menu = sections_config_ref.clone();
+                let model_for_menu = model_ref.clone();
+                let profile_name_for_menu = profile_name_ref.clone();
+                let profile_path_for_menu = profile_path_ref.clone();
+                let mod_path = mod_entry.path();
+
+                gesture.connect_pressed(move |gesture, _n_press, x, y| {
+                    // Build menu dynamically from current sections
+                    let menu = gio::Menu::new();
+                    let send_section = gio::Menu::new();
+
+                    let sections = sections_config_for_menu.borrow();
+                    for section_data in &sections.sections {
+                        let item = gio::MenuItem::new(
+                            Some(&section_data.name),
+                            Some(&format!("mod.send-to-section::{}", section_data.section_id)),
+                        );
+                        send_section.append_item(&item);
+                    }
+                    drop(sections);
+
+                    menu.append_submenu(Some("Send to Section"), &send_section);
+
+                    // Create popover menu
+                    let popover = PopoverMenu::from_model(Some(&menu));
+                    if let Some(widget) = gesture.widget() {
+                        popover.set_parent(&widget);
+                    }
+                    popover.set_has_arrow(false);
+
+                    // Position at click location
+                    let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
+                    popover.set_pointing_to(Some(&rect));
+
+                    // Create action group for section actions
+                    let action_group = gio::SimpleActionGroup::new();
+                    let send_action = gio::SimpleAction::new(
+                        "send-to-section",
+                        Some(&String::static_variant_type()),
+                    );
+
+                    // Clone for action closure
+                    let model_clone = model_for_menu.clone();
+                    let profile_name_clone = profile_name_for_menu.clone();
+                    let profile_path_clone = profile_path_for_menu.clone();
+                    let sections_config_clone = sections_config_for_menu.clone();
+                    let mod_path_clone = mod_path.clone();
+                    let popover_clone = popover.clone();
+
+                    send_action.connect_activate(move |_action, param| {
+                        if let Some(section_id) = param.and_then(|p| p.get::<String>()) {
+                            move_mod_to_section_static(
+                                &model_clone,
+                                mod_path_clone.as_path(),
+                                &section_id,
+                                &sections_config_clone,
+                                &profile_name_clone,
+                                &profile_path_clone,
+                            );
+                        }
+                        popover_clone.popdown();
+                    });
+
+                    action_group.add_action(&send_action);
+                    popover.insert_action_group("mod", Some(&action_group));
+
+                    popover.popup();
+                });
+
+                container.add_controller(gesture.clone());
+
                 unsafe {
                     list_item.set_data("name-binding", binding);
                     list_item.set_data("is-section-name", false);
+                    list_item.set_data("context-gesture", gesture);
                 }
             }
         });
@@ -316,7 +395,14 @@ impl ModListView {
                     }
                 }
             } else {
-                // Clean up Label binding
+                // Clean up Label binding and context gesture
+                if let Some(container) = list_item.child().and_downcast::<Box>() {
+                    unsafe {
+                        if let Some(gesture) = list_item.steal_data::<GestureClick>("context-gesture") {
+                            container.remove_controller(&gesture);
+                        }
+                    }
+                }
                 unsafe {
                     if let Some(binding) = list_item.steal_data::<glib::Binding>("name-binding") {
                         binding.unbind();

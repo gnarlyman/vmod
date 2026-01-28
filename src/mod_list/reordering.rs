@@ -1,7 +1,7 @@
 //! Mod reordering operations (move up/down/top/bottom, enable/disable all, add section).
 
 use gtk4::prelude::*;
-use gtk4::{gio, ColumnView, CustomFilter, FilterChange, SingleSelection};
+use gtk4::{gio, glib, ColumnView, CustomFilter, FilterChange, SingleSelection};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -354,6 +354,96 @@ impl ModListView {
                 }
             }
         }
+    }
+}
+
+/// Move a mod to the bottom of a specific section
+pub fn move_mod_to_section_static(
+    model: &RefCell<Option<gio::ListStore>>,
+    mod_path: &std::path::Path,
+    target_section_id: &str,
+    sections_config: &Rc<RefCell<SectionsConfig>>,
+    profile_name: &Rc<RefCell<Option<String>>>,
+    profile_path: &Rc<RefCell<Option<PathBuf>>>,
+) {
+    let model_borrow = model.borrow();
+    if let Some(model_store) = model_borrow.as_ref() {
+        // Find the mod's current position
+        let mut mod_position: Option<u32> = None;
+        let mut mod_item: Option<glib::Object> = None;
+
+        for i in 0..model_store.n_items() {
+            if let Some(item) = model_store.item(i) {
+                if let Some(entry) = item.downcast_ref::<ModEntry>() {
+                    if entry.path() == mod_path {
+                        mod_position = Some(i);
+                        mod_item = Some(item);
+                        break;
+                    }
+                }
+            }
+        }
+
+        let (current_pos, item) = match (mod_position, mod_item) {
+            (Some(pos), Some(item)) => (pos, item),
+            _ => return,
+        };
+
+        // Find target section's end position (last mod before next section or end of list)
+        let mut target_pos: Option<u32> = None;
+        let mut found_section = false;
+
+        for i in 0..model_store.n_items() {
+            if let Some(check_item) = model_store.item(i) {
+                if let Some(section) = check_item.downcast_ref::<SectionHeader>() {
+                    if section.section_id() == target_section_id {
+                        found_section = true;
+                        target_pos = Some(i + 1); // Start after section header
+                    } else if found_section {
+                        // Found next section - insert before it
+                        break;
+                    }
+                } else if found_section {
+                    // This is a mod in the target section - update target to after this mod
+                    target_pos = Some(i + 1);
+                }
+            }
+        }
+
+        // If we didn't find the section, return early
+        let insert_pos = match target_pos {
+            Some(pos) => pos,
+            None => return,
+        };
+
+        // Remove mod from current position
+        model_store.remove(current_pos);
+
+        // Adjust insert position if current was before target
+        let adjusted_pos = if current_pos < insert_pos {
+            insert_pos - 1
+        } else {
+            insert_pos
+        };
+
+        // Insert at new position
+        model_store.insert(adjusted_pos, &item);
+
+        // Renumber all items by position
+        for i in 0..model_store.n_items() {
+            if let Some(item) = model_store.item(i) {
+                set_item_order(&item, i);
+            }
+        }
+
+        // Update section assignments
+        update_section_assignments(model_store);
+
+        // Sync and save
+        sync_sections_to_config(model_store, sections_config, profile_path);
+
+        drop(model_borrow);
+        save_mod_state_static(model, profile_name);
     }
 }
 
