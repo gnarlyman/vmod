@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev build-essential
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Run tests
+        run: cargo test --release
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p release
+          cp target/release/vmod release/
+          tar -czvf vmod-linux-x86_64.tar.gz -C release vmod
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vmod-linux-x86_64
+          path: vmod-linux-x86_64.tar.gz
+
+      - name: Create GitHub Release
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --generate-notes \
+            vmod-linux-x86_64.tar.gz
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
