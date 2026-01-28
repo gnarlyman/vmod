@@ -356,3 +356,60 @@ impl ModListView {
         }
     }
 }
+
+/// Remove a section from the model and config
+pub fn remove_section_static(
+    model: &RefCell<Option<gio::ListStore>>,
+    section_id: &str,
+    sections_config: &Rc<RefCell<SectionsConfig>>,
+    profile_path: &Rc<RefCell<Option<PathBuf>>>,
+    filter: &RefCell<Option<CustomFilter>>,
+) {
+    let model_borrow = model.borrow();
+    if let Some(model_store) = model_borrow.as_ref() {
+        // Find section position in model by section_id
+        let mut position: Option<u32> = None;
+        for i in 0..model_store.n_items() {
+            if let Some(item) = model_store.item(i) {
+                if let Some(section) = item.downcast_ref::<SectionHeader>() {
+                    if section.section_id() == section_id {
+                        position = Some(i);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(pos) = position {
+            // Remove from model
+            model_store.remove(pos);
+
+            // Update order of remaining items
+            for i in pos..model_store.n_items() {
+                if let Some(item) = model_store.item(i) {
+                    if let Some(mod_entry) = item.downcast_ref::<ModEntry>() {
+                        mod_entry.set_order(i);
+                    } else if let Some(sec) = item.downcast_ref::<SectionHeader>() {
+                        sec.set_order(i);
+                    }
+                }
+            }
+
+            // Update section assignments
+            update_section_assignments(model_store);
+
+            // Remove from config
+            sections_config.borrow_mut().remove_section(section_id);
+
+            // Save config to disk
+            if let Some(path) = profile_path.borrow().as_ref() {
+                let _ = sections_config.borrow().save(path);
+            }
+
+            // Trigger filter update
+            if let Some(filter) = filter.borrow().as_ref() {
+                filter.changed(FilterChange::Different);
+            }
+        }
+    }
+}

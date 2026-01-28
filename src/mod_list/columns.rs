@@ -2,12 +2,13 @@
 
 use gtk4::prelude::*;
 use gtk4::{
-    gio, glib, Box, Button, CheckButton, ColumnView, ColumnViewColumn, EditableLabel, FilterChange,
-    Label, Orientation, SignalListItemFactory,
+    gio, glib, Box, Button, CheckButton, ColumnView, ColumnViewColumn, EditableLabel,
+    EventControllerMotion, FilterChange, Label, Orientation, SignalListItemFactory,
 };
 
 use crate::mod_entry::{ModEntry, SectionHeader};
 use super::imp::ModListView;
+use super::reordering::remove_section_static;
 use super::vfs_state::save_mod_state_static;
 
 impl ModListView {
@@ -176,6 +177,8 @@ impl ModListView {
         // Clone refs needed for bind closure
         let sections_config_ref = self.sections_config.clone();
         let profile_path_ref = self.profile_path.clone();
+        let model_ref = self.model.clone();
+        let filter_ref = self.filter.clone();
 
         factory.connect_bind(move |_factory, item| {
             let list_item = item.downcast_ref::<gtk4::ListItem>()
@@ -218,9 +221,45 @@ impl ModListView {
 
                 container.append(&editable);
 
+                // Create delete button (hidden by default)
+                let delete_button = Button::from_icon_name("user-trash-symbolic");
+                delete_button.add_css_class("flat");
+                delete_button.set_visible(false);
+                container.append(&delete_button);
+
+                // Connect delete button click
+                let section_id = section.section_id();
+                let model_clone = model_ref.clone();
+                let sections_config_clone2 = sections_config_ref.clone();
+                let profile_path_clone2 = profile_path_ref.clone();
+                let filter_clone = filter_ref.clone();
+                let delete_handler_id = delete_button.connect_clicked(move |_btn| {
+                    remove_section_static(
+                        &model_clone,
+                        &section_id,
+                        &sections_config_clone2,
+                        &profile_path_clone2,
+                        &filter_clone,
+                    );
+                });
+
+                // Add hover controller to show/hide delete button
+                let motion_controller = EventControllerMotion::new();
+                let delete_button_enter = delete_button.clone();
+                motion_controller.connect_enter(move |_controller, _x, _y| {
+                    delete_button_enter.set_visible(true);
+                });
+                let delete_button_leave = delete_button.clone();
+                motion_controller.connect_leave(move |_controller| {
+                    delete_button_leave.set_visible(false);
+                });
+                container.add_controller(motion_controller.clone());
+
                 unsafe {
                     list_item.set_data("is-section-name", true);
                     list_item.set_data("editable-handler-id", handler_id);
+                    list_item.set_data("delete-handler-id", delete_handler_id);
+                    list_item.set_data("motion-controller", motion_controller);
                 }
             } else if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
                 // Regular mod entry: use Label (not editable)
@@ -251,7 +290,7 @@ impl ModListView {
             };
 
             if is_section {
-                // Clean up EditableLabel handler
+                // Clean up EditableLabel handler and delete button handler
                 if let Some(container) = list_item.child().and_downcast::<Box>() {
                     if let Some(editable) = container.first_child().and_downcast::<EditableLabel>() {
                         editable.remove_css_class("heading");
@@ -259,6 +298,20 @@ impl ModListView {
                             if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("editable-handler-id") {
                                 editable.disconnect(handler_id);
                             }
+                        }
+                        // Clean up delete button handler (sibling of editable)
+                        if let Some(delete_button) = editable.next_sibling().and_downcast::<Button>() {
+                            unsafe {
+                                if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("delete-handler-id") {
+                                    delete_button.disconnect(handler_id);
+                                }
+                            }
+                        }
+                    }
+                    // Clean up motion controller
+                    unsafe {
+                        if let Some(controller) = list_item.steal_data::<EventControllerMotion>("motion-controller") {
+                            container.remove_controller(&controller);
                         }
                     }
                 }
