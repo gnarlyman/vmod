@@ -24,7 +24,7 @@ jobs:
         run: cargo build --release
 
       - name: Run tests
-        run: cargo test --release
+        run: cargo test --release -- --test-threads=1
 
       - name: Prepare artifact
         run: |
