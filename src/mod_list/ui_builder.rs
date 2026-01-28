@@ -739,7 +739,7 @@ impl ModListView {
     /// Handle Install button click
     fn on_install_clicked(
         selection: &SingleSelection,
-        mods_folder: &RefCell<Option<PathBuf>>,
+        mods_folder: &Rc<RefCell<Option<PathBuf>>>,
     ) {
         let position = selection.selected();
         if position == gtk4::INVALID_LIST_POSITION {

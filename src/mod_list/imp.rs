@@ -45,7 +45,7 @@ pub struct ModListView {
     pub collapsed_sections: Rc<RefCell<HashSet<String>>>,
     pub profile_path: Rc<RefCell<Option<PathBuf>>>,
     // Stored paths for reload
-    pub mods_folder: RefCell<Option<PathBuf>>,
+    pub mods_folder: Rc<RefCell<Option<PathBuf>>>,
     pub game_mods_folder: RefCell<Option<PathBuf>>,
     // Downloads panel state
     pub downloads_model: RefCell<Option<gio::ListStore>>,
@@ -78,7 +78,7 @@ impl Default for ModListView {
             sections_config: Rc::new(RefCell::new(SectionsConfig::default())),
             collapsed_sections: Rc::new(RefCell::new(HashSet::new())),
             profile_path: Rc::new(RefCell::new(None)),
-            mods_folder: RefCell::new(None),
+            mods_folder: Rc::new(RefCell::new(None)),
             game_mods_folder: RefCell::new(None),
             downloads_model: RefCell::new(None),
             bottom_paned: RefCell::new(None),
