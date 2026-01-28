@@ -1,10 +1,12 @@
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use gtk4::{
-    gio, glib, Box, Button, CheckButton, ColumnView, ColumnViewColumn, Label, Orientation,
-    PolicyType, ScrolledWindow, SignalListItemFactory, SingleSelection,
+    gio, glib, Box, Button, CheckButton, ColumnView, ColumnViewColumn, CustomFilter,
+    FilterChange, FilterListModel, Image, Label, Orientation, PolicyType, ScrolledWindow,
+    SearchEntry, SignalListItemFactory, SingleSelection,
 };
 use std::cell::RefCell;
+use std::rc::Rc;
 use std::path::PathBuf;
 
 use crate::mod_entry::{load_mods_json, normalize_name, save_mods_json, DfmodEntry, ModsJsonEntry, SortingRules};
@@ -12,9 +14,15 @@ use crate::mod_entry::{load_mods_json, normalize_name, save_mods_json, DfmodEntr
 pub struct ModsJsonView {
     pub column_view: RefCell<Option<ColumnView>>,
     pub model: RefCell<Option<gio::ListStore>>,
+    pub filter: RefCell<Option<CustomFilter>>,
+    pub filter_model: RefCell<Option<FilterListModel>>,
     pub selection_model: RefCell<Option<SingleSelection>>,
     pub mods_json_path: RefCell<Option<PathBuf>>,
     pub settings: RefCell<Option<gio::Settings>>,
+    pub correct_count_label: RefCell<Option<Label>>,
+    pub incorrect_count_label: RefCell<Option<Label>>,
+    pub unknown_count_label: RefCell<Option<Label>>,
+    pub search_text: Rc<RefCell<String>>,
 }
 
 impl Default for ModsJsonView {
@@ -22,9 +30,15 @@ impl Default for ModsJsonView {
         Self {
             column_view: RefCell::new(None),
             model: RefCell::new(None),
+            filter: RefCell::new(None),
+            filter_model: RefCell::new(None),
             selection_model: RefCell::new(None),
             mods_json_path: RefCell::new(None),
             settings: RefCell::new(None),
+            correct_count_label: RefCell::new(None),
+            incorrect_count_label: RefCell::new(None),
+            unknown_count_label: RefCell::new(None),
+            search_text: Rc::new(RefCell::new(String::new())),
         }
     }
 }
@@ -58,22 +72,88 @@ impl ObjectImpl for ModsJsonView {
         header_label.set_xalign(0.0);
         obj.append(&header_label);
 
-        // Sort button row
+        // Sort/filter row with search entry, sort button, and status counts
         let sort_row = Box::new(Orientation::Horizontal, 6);
+
+        let search_entry = SearchEntry::new();
+        search_entry.set_placeholder_text(Some("Filter mods..."));
+        search_entry.set_hexpand(true);
+        sort_row.append(&search_entry);
+
         let sort_button = Button::with_label("Sort Now");
         sort_button.set_tooltip_text(Some("Apply sorting rules from sorting_rules.json"));
         sort_row.append(&sort_button);
+
+        // Status counts with icons
+        let status_box = Box::new(Orientation::Horizontal, 8);
+        status_box.add_css_class("dim-label");
+
+        // Correct count (checkmark icon)
+        let correct_icon = Image::from_icon_name("object-select-symbolic");
+        correct_icon.add_css_class("sorting-correct");
+        status_box.append(&correct_icon);
+        let correct_label = Label::new(Some("0"));
+        self.correct_count_label.replace(Some(correct_label.clone()));
+        status_box.append(&correct_label);
+
+        // Incorrect count (error icon)
+        let incorrect_icon = Image::from_icon_name("dialog-error-symbolic");
+        incorrect_icon.add_css_class("sorting-wrong");
+        status_box.append(&incorrect_icon);
+        let incorrect_label = Label::new(Some("0"));
+        self.incorrect_count_label.replace(Some(incorrect_label.clone()));
+        status_box.append(&incorrect_label);
+
+        // Unknown count (question icon)
+        let unknown_icon = Image::from_icon_name("dialog-question-symbolic");
+        status_box.append(&unknown_icon);
+        let unknown_label = Label::new(Some("0"));
+        self.unknown_count_label.replace(Some(unknown_label.clone()));
+        status_box.append(&unknown_label);
+
+        sort_row.append(&status_box);
         obj.append(&sort_row);
 
         // Create the ListStore to hold DfmodEntry objects
         let model = gio::ListStore::new::<DfmodEntry>();
         self.model.replace(Some(model.clone()));
 
-        // Create selection model
-        let selection_model = SingleSelection::new(Some(model.clone()));
+        // Create filter for searching by title or filename
+        let search_text = self.search_text.clone();
+        let filter = CustomFilter::new(move |obj| {
+            if let Some(entry) = obj.downcast_ref::<DfmodEntry>() {
+                let search = search_text.borrow();
+                if search.is_empty() {
+                    return true;
+                }
+                let search_lower = search.to_lowercase();
+                entry.title().to_lowercase().contains(&search_lower)
+                    || entry.file_name().to_lowercase().contains(&search_lower)
+            } else {
+                true
+            }
+        });
+        self.filter.replace(Some(filter.clone()));
+
+        // Create filter model wrapping the ListStore
+        let filter_model = FilterListModel::new(Some(model.clone()), Some(filter.clone()));
+        self.filter_model.replace(Some(filter_model.clone()));
+
+        // Create selection model using filtered model
+        let selection_model = SingleSelection::new(Some(filter_model));
         selection_model.set_autoselect(false);
         selection_model.set_can_unselect(true);
         self.selection_model.replace(Some(selection_model.clone()));
+
+        // Connect search entry to filter
+        let filter_clone = filter.clone();
+        let search_text_for_signal = self.search_text.clone();
+        let obj_clone = obj.clone();
+        search_entry.connect_search_changed(move |entry| {
+            *search_text_for_signal.borrow_mut() = entry.text().to_string();
+            filter_clone.changed(FilterChange::Different);
+            obj_clone.imp().update_status_counts();
+        });
 
         // Create ColumnView
         let column_view = ColumnView::new(Some(selection_model.clone()));
@@ -771,38 +851,91 @@ impl ModsJsonView {
 
     /// Update sorting violation status for all entries
     fn update_violation_status(&self) {
+        {
+            let model_borrow = self.model.borrow();
+            let Some(model) = model_borrow.as_ref() else { return };
+
+            // Build entries list from model
+            let mut entries = Vec::new();
+            for i in 0..model.n_items() {
+                if let Some(dfmod) = model.item(i).and_downcast::<DfmodEntry>() {
+                    entries.push(ModsJsonEntry {
+                        file_name: dfmod.file_name(),
+                        title: dfmod.title(),
+                        enabled: dfmod.enabled(),
+                        load_priority: dfmod.load_priority(),
+                    });
+                }
+            }
+
+            // Load rules from config directory
+            let config_dir = match dirs::config_dir() {
+                Some(dir) => dir.join("vmod"),
+                None => return,
+            };
+            let rules_path = config_dir.join("sorting_rules.json");
+            let rules = SortingRules::load(&rules_path).unwrap_or_default();
+            let violation_status = rules.detect_violations(&entries);
+
+            // Update each entry's sorting_status
+            for i in 0..model.n_items() {
+                if let Some(dfmod) = model.item(i).and_downcast::<DfmodEntry>() {
+                    let normalized = normalize_name(&dfmod.file_name());
+                    let s = violation_status.status.get(&normalized).copied().unwrap_or(0);
+                    dfmod.set_sorting_status(s);
+                }
+            }
+        } // model borrow released here
+
+        self.update_status_counts();
+    }
+
+    /// Update the status counts labels
+    fn update_status_counts(&self) {
         let model = self.model.borrow();
         let Some(model) = model.as_ref() else { return };
 
-        // Build entries list from model
-        let mut entries = Vec::new();
-        for i in 0..model.n_items() {
-            if let Some(dfmod) = model.item(i).and_downcast::<DfmodEntry>() {
-                entries.push(ModsJsonEntry {
-                    file_name: dfmod.file_name(),
-                    title: dfmod.title(),
-                    enabled: dfmod.enabled(),
-                    load_priority: dfmod.load_priority(),
-                });
+        let mut correct = 0u32;
+        let mut incorrect = 0u32;
+        let mut unknown = 0u32;
+
+        // Count from filter_model if filter active, else from base model
+        let search_text = self.search_text.borrow();
+        let filter_model = self.filter_model.borrow();
+
+        if search_text.is_empty() {
+            // No filter active - count from base model
+            for i in 0..model.n_items() {
+                if let Some(entry) = model.item(i).and_downcast::<DfmodEntry>() {
+                    match entry.sorting_status() {
+                        1 => correct += 1,
+                        2 => incorrect += 1,
+                        _ => unknown += 1,
+                    }
+                }
+            }
+        } else if let Some(fm) = filter_model.as_ref() {
+            // Filter active - count from filter model
+            for i in 0..fm.n_items() {
+                if let Some(entry) = fm.item(i).and_downcast::<DfmodEntry>() {
+                    match entry.sorting_status() {
+                        1 => correct += 1,
+                        2 => incorrect += 1,
+                        _ => unknown += 1,
+                    }
+                }
             }
         }
 
-        // Load rules from config directory
-        let config_dir = match dirs::config_dir() {
-            Some(dir) => dir.join("vmod"),
-            None => return,
-        };
-        let rules_path = config_dir.join("sorting_rules.json");
-        let rules = SortingRules::load(&rules_path).unwrap_or_default();
-        let violation_status = rules.detect_violations(&entries);
-
-        // Update each entry's sorting_status
-        for i in 0..model.n_items() {
-            if let Some(dfmod) = model.item(i).and_downcast::<DfmodEntry>() {
-                let normalized = normalize_name(&dfmod.file_name());
-                let s = violation_status.status.get(&normalized).copied().unwrap_or(0);
-                dfmod.set_sorting_status(s);
-            }
+        // Update individual count labels
+        if let Some(label) = self.correct_count_label.borrow().as_ref() {
+            label.set_text(&correct.to_string());
+        }
+        if let Some(label) = self.incorrect_count_label.borrow().as_ref() {
+            label.set_text(&incorrect.to_string());
+        }
+        if let Some(label) = self.unknown_count_label.borrow().as_ref() {
+            label.set_text(&unknown.to_string());
         }
     }
 }
