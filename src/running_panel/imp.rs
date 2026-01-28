@@ -1,10 +1,12 @@
 use gtk4::prelude::*;
 use gtk4::subclass::prelude::*;
 use gtk4::{
-    glib, gio, Box, Button, Entry, FileDialog, Label, Orientation, ScrolledWindow, Separator, TextView,
+    glib, gio, Box, Button, Entry, FileDialog, Label, Orientation, ScrolledWindow, Separator,
+    Stack, StackSwitcher, TextView,
 };
 use std::cell::RefCell;
-use std::io::{BufRead, BufReader};
+use std::fs;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
@@ -61,6 +63,11 @@ pub struct RunningPanel {
     pub stop_button: RefCell<Option<Button>>,
     pub output_view: RefCell<Option<TextView>>,
 
+    // Tabbed log viewing
+    pub stack: RefCell<Option<Stack>>,
+    pub player_log_view: RefCell<Option<TextView>>,
+    pub vmod_log_view: RefCell<Option<TextView>>,
+
     // For output polling
     pub output_source_id: RefCell<Option<glib::SourceId>>,
 }
@@ -77,6 +84,9 @@ impl Default for RunningPanel {
             run_button: RefCell::new(None),
             stop_button: RefCell::new(None),
             output_view: RefCell::new(None),
+            stack: RefCell::new(None),
+            player_log_view: RefCell::new(None),
+            vmod_log_view: RefCell::new(None),
             output_source_id: RefCell::new(None),
         }
     }
@@ -173,12 +183,26 @@ impl ObjectImpl for RunningPanel {
         separator.set_margin_bottom(6);
         obj.append(&separator);
 
-        // Output section
-        let output_label = Label::new(Some("Output:"));
-        output_label.set_halign(gtk4::Align::Start);
-        output_label.add_css_class("dim-label");
-        obj.append(&output_label);
+        // Tab header with refresh button
+        let tab_header = Box::new(Orientation::Horizontal, 6);
 
+        let stack_switcher = StackSwitcher::new();
+        stack_switcher.set_halign(gtk4::Align::Start);
+        stack_switcher.set_hexpand(true);
+        tab_header.append(&stack_switcher);
+
+        let refresh_button = Button::from_icon_name("view-refresh-symbolic");
+        refresh_button.set_tooltip_text(Some("Refresh log"));
+        tab_header.append(&refresh_button);
+
+        obj.append(&tab_header);
+
+        let stack = Stack::new();
+        stack.set_vexpand(true);
+        stack.set_transition_type(gtk4::StackTransitionType::Crossfade);
+        stack.set_transition_duration(150);
+
+        // Output tab (process stdout/stderr)
         let output_scroll = ScrolledWindow::new();
         output_scroll.set_vexpand(true);
         output_scroll.set_min_content_height(200);
@@ -190,7 +214,40 @@ impl ObjectImpl for RunningPanel {
         output_view.set_wrap_mode(gtk4::WrapMode::WordChar);
         output_scroll.set_child(Some(&output_view));
 
-        obj.append(&output_scroll);
+        stack.add_titled(&output_scroll, Some("output"), "Output");
+
+        // Player.log tab (Unity game log)
+        let player_log_scroll = ScrolledWindow::new();
+        player_log_scroll.set_vexpand(true);
+        player_log_scroll.set_min_content_height(200);
+
+        let player_log_view = TextView::new();
+        player_log_view.set_editable(false);
+        player_log_view.set_cursor_visible(false);
+        player_log_view.set_monospace(true);
+        player_log_view.set_wrap_mode(gtk4::WrapMode::WordChar);
+        player_log_scroll.set_child(Some(&player_log_view));
+
+        stack.add_titled(&player_log_scroll, Some("player_log"), "Player.log");
+
+        // vmod.log tab (application log)
+        let vmod_log_scroll = ScrolledWindow::new();
+        vmod_log_scroll.set_vexpand(true);
+        vmod_log_scroll.set_min_content_height(200);
+
+        let vmod_log_view = TextView::new();
+        vmod_log_view.set_editable(false);
+        vmod_log_view.set_cursor_visible(false);
+        vmod_log_view.set_monospace(true);
+        vmod_log_view.set_wrap_mode(gtk4::WrapMode::WordChar);
+        vmod_log_scroll.set_child(Some(&vmod_log_view));
+
+        stack.add_titled(&vmod_log_scroll, Some("vmod_log"), "vmod.log");
+
+        // Link stack switcher to stack
+        stack_switcher.set_stack(Some(&stack));
+
+        obj.append(&stack);
 
         // Store widget references
         self.exe_entry.replace(Some(exe_entry.clone()));
@@ -199,6 +256,9 @@ impl ObjectImpl for RunningPanel {
         self.run_button.replace(Some(run_button.clone()));
         self.stop_button.replace(Some(stop_button.clone()));
         self.output_view.replace(Some(output_view.clone()));
+        self.stack.replace(Some(stack.clone()));
+        self.player_log_view.replace(Some(player_log_view));
+        self.vmod_log_view.replace(Some(vmod_log_view));
 
         // Initialize launcher_path from config if present
         if !config.launcher_path.is_empty() {
@@ -224,6 +284,13 @@ impl ObjectImpl for RunningPanel {
 
         // Connect stop button
         self.connect_stop_button(&run_button, &stop_button, &status_label);
+
+        // Connect refresh button
+        self.connect_refresh_button(&refresh_button, &stack);
+
+        // Load initial log content
+        self.refresh_log_tab("player_log");
+        self.refresh_log_tab("vmod_log");
     }
 }
 
@@ -564,5 +631,108 @@ impl RunningPanel {
                 stop_button_clone.set_visible(false);
             }
         });
+    }
+
+    /// Connect refresh button click handler
+    fn connect_refresh_button(&self, refresh_button: &Button, stack: &Stack) {
+        let obj = self.obj();
+        let obj_weak = obj.downgrade();
+        let stack_clone = stack.clone();
+
+        refresh_button.connect_clicked(move |_| {
+            let obj = match obj_weak.upgrade() {
+                Some(o) => o,
+                None => return,
+            };
+
+            if let Some(visible_name) = stack_clone.visible_child_name() {
+                obj.imp().refresh_log_tab(&visible_name);
+            }
+        });
+    }
+
+    /// Refresh the content of a log tab
+    fn refresh_log_tab(&self, tab_name: &str) {
+        const MAX_BYTES: u64 = 100 * 1024; // Last 100KB
+
+        match tab_name {
+            "player_log" => {
+                let path = dirs::config_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("unity3d")
+                    .join("Daggerfall Workshop")
+                    .join("Daggerfall Unity")
+                    .join("Player.log");
+
+                if let Some(view) = self.player_log_view.borrow().as_ref() {
+                    let content = Self::read_log_tail(&path, MAX_BYTES);
+                    view.buffer().set_text(&content);
+                    Self::scroll_to_bottom(view);
+                }
+            }
+            "vmod_log" => {
+                let path = dirs::config_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("vmod")
+                    .join("vmod.log");
+
+                if let Some(view) = self.vmod_log_view.borrow().as_ref() {
+                    let content = Self::read_log_tail(&path, MAX_BYTES);
+                    view.buffer().set_text(&content);
+                    Self::scroll_to_bottom(view);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Read the last N bytes of a log file
+    fn read_log_tail(path: &PathBuf, max_bytes: u64) -> String {
+        if !path.exists() {
+            return format!("[File not found: {}]", path.display());
+        }
+
+        let mut file = match fs::File::open(path) {
+            Ok(f) => f,
+            Err(e) => return format!("[Error opening file: {}]", e),
+        };
+
+        let metadata = match file.metadata() {
+            Ok(m) => m,
+            Err(e) => return format!("[Error reading file: {}]", e),
+        };
+
+        let file_size = metadata.len();
+        let start_pos = if file_size > max_bytes {
+            file_size - max_bytes
+        } else {
+            0
+        };
+
+        if let Err(e) = file.seek(SeekFrom::Start(start_pos)) {
+            return format!("[Error seeking file: {}]", e);
+        }
+
+        let mut content = String::new();
+        if let Err(e) = file.read_to_string(&mut content) {
+            return format!("[Error reading file: {}]", e);
+        }
+
+        // If we started mid-file, skip to first newline
+        if start_pos > 0 {
+            if let Some(newline_pos) = content.find('\n') {
+                content = content[newline_pos + 1..].to_string();
+            }
+        }
+
+        content
+    }
+
+    /// Scroll a TextView to the bottom
+    fn scroll_to_bottom(view: &TextView) {
+        let buffer = view.buffer();
+        let end = buffer.end_iter();
+        let mark = buffer.create_mark(None, &end, false);
+        view.scroll_to_mark(&mark, 0.0, false, 0.0, 0.0);
     }
 }
