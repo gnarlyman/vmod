@@ -35,7 +35,9 @@ jobs:
         run: cargo build --release
 
       - name: Run tests
-        run: cargo test --release -- --test-threads=1
+        run: |
+          cargo test --release --lib -- --test-threads=1
+          cargo test --release --test profile_integration_tests
 
       - name: Prepare artifact
         run: |
