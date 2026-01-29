@@ -161,62 +161,20 @@ impl ModList {
                 continue;
             }
 
-            // Check if this is a valid mod folder
-            if Self::is_valid_mod_folder(&path) {
-                let mod_name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("Unknown")
-                    .to_string();
+            let mod_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Unknown")
+                .to_string();
 
-                let mod_entry = ModEntry::new(mod_name, path, order);
-                mods.push(mod_entry);
-                order += 1;
-            }
+            let mod_entry = ModEntry::new(mod_name, path, order);
+            mods.push(mod_entry);
+            order += 1;
         }
 
         mods
     }
 
-    /// Checks if a folder is a valid mod folder
-    /// Valid mod folders have standard DFU archive structure (Mods/, Textures/, Sound/, etc.)
-    /// OR contain recognized content folders/files at the top level
-    fn is_valid_mod_folder(path: &Path) -> bool {
-        if !path.is_dir() {
-            return false;
-        }
-
-        let entries = match std::fs::read_dir(path) {
-            Ok(e) => e,
-            Err(_) => return false,
-        };
-
-        // DFU recognized folders (can appear in archive or as loose structure)
-        let recognized_folders = vec![
-            "Mods", "Textures", "Sound", "Music", "QuestPacks", "Fonts",
-            "textures", "models", "scripts", "Models", "Scripts",
-            "Books", "Docs", "Text"
-        ];
-
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            let file_name = entry_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-            if entry_path.is_dir() {
-                // Check if it's a recognized DFU folder
-                if recognized_folders.iter().any(|&f| f == file_name) {
-                    return true;
-                }
-            }
-
-            // Check for .dfmod files at top level
-            if entry_path.is_file() && file_name.ends_with(".dfmod") {
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 #[cfg(test)]
