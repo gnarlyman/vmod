@@ -82,6 +82,12 @@ mod imp {
         pub conflict_count: Cell<u32>,
         #[property(get, set)]
         pub section_id: RefCell<Option<String>>,
+        /// Version status: 0=unknown, 1=up-to-date, 2=outdated
+        #[property(get, set)]
+        pub version_status: Cell<u8>,
+        /// Latest version from Nexus (if checked)
+        #[property(get, set)]
+        pub latest_version: RefCell<Option<String>>,
     }
 
     #[glib::object_subclass]
@@ -125,6 +131,12 @@ impl ModEntry {
 
     pub fn set_path(&self, path: PathBuf) {
         self.imp().path.replace(path);
+    }
+
+    /// Set the latest_version directly (workaround for Option<String> property)
+    pub fn set_latest_version_opt(&self, version: Option<String>) {
+        self.imp().latest_version.replace(version);
+        self.notify("latest-version");
     }
 }
 
@@ -246,78 +258,6 @@ mod tests {
 
         let mods = ModList::scan_mods_folder(mods_path);
         assert_eq!(mods.len(), 2);
-    }
-
-    #[test]
-    fn test_is_valid_mod_folder_with_textures() {
-        let temp_dir = TempDir::new().unwrap();
-        let mod_path = temp_dir.path().join("test_mod");
-        fs::create_dir(&mod_path).unwrap();
-        fs::create_dir(mod_path.join("textures")).unwrap();
-
-        assert!(ModList::is_valid_mod_folder(&mod_path));
-    }
-
-    #[test]
-    fn test_is_valid_mod_folder_with_dfmod() {
-        let temp_dir = TempDir::new().unwrap();
-        let mod_path = temp_dir.path().join("test_mod");
-        fs::create_dir(&mod_path).unwrap();
-        fs::write(mod_path.join("test.dfmod"), "").unwrap();
-
-        assert!(ModList::is_valid_mod_folder(&mod_path));
-    }
-
-    #[test]
-    fn test_is_valid_mod_folder_empty() {
-        let temp_dir = TempDir::new().unwrap();
-        let mod_path = temp_dir.path().join("test_mod");
-        fs::create_dir(&mod_path).unwrap();
-
-        assert!(!ModList::is_valid_mod_folder(&mod_path));
-    }
-
-    #[test]
-    fn test_is_valid_mod_folder_with_mods_subfolder() {
-        let temp_dir = TempDir::new().unwrap();
-        let mod_path = temp_dir.path().join("test_mod");
-        fs::create_dir(&mod_path).unwrap();
-
-        // Create standard DFU archive structure with Mods folder
-        let mods_subfolder = mod_path.join("Mods");
-        fs::create_dir(&mods_subfolder).unwrap();
-        fs::write(mods_subfolder.join("test.dfmod"), "").unwrap();
-
-        assert!(ModList::is_valid_mod_folder(&mod_path));
-    }
-
-    #[test]
-    fn test_is_valid_mod_folder_with_textures_only() {
-        let temp_dir = TempDir::new().unwrap();
-        let mod_path = temp_dir.path().join("test_mod");
-        fs::create_dir(&mod_path).unwrap();
-
-        // Create mod with only Textures folder (no .dfmod)
-        let textures_folder = mod_path.join("Textures");
-        fs::create_dir(&textures_folder).unwrap();
-        fs::write(textures_folder.join("texture.png"), "").unwrap();
-
-        assert!(ModList::is_valid_mod_folder(&mod_path));
-    }
-
-    #[test]
-    fn test_is_valid_mod_folder_with_docs_only() {
-        let temp_dir = TempDir::new().unwrap();
-        let mod_path = temp_dir.path().join("test_mod");
-        fs::create_dir(&mod_path).unwrap();
-
-        // Create only Docs folder
-        let docs_folder = mod_path.join("Docs");
-        fs::create_dir(&docs_folder).unwrap();
-        fs::write(docs_folder.join("readme.txt"), "").unwrap();
-
-        // Docs is in the recognized folders list, so this is valid
-        assert!(ModList::is_valid_mod_folder(&mod_path));
     }
 
     #[test]

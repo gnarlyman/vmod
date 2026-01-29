@@ -67,6 +67,40 @@ pub struct ApiError {
     pub message: String,
 }
 
+/// Mod information from /v1/games/{game}/mods/{mod_id}.json
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ModInfo {
+    /// Mod ID on Nexus
+    pub mod_id: u64,
+    /// Mod name
+    pub name: String,
+    /// Headline version (may not match file versions)
+    pub version: String,
+}
+
+/// Single file from mod files list
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ModFile {
+    /// File ID on Nexus
+    pub file_id: u64,
+    /// File name
+    pub name: String,
+    /// File version
+    pub version: String,
+    /// Category name (e.g., "MAIN", "UPDATE", "OPTIONAL")
+    pub category_name: String,
+    /// Upload timestamp (Unix time)
+    #[serde(default)]
+    pub uploaded_timestamp: u64,
+}
+
+/// Response from /v1/games/{game}/mods/{mod_id}/files.json
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ModFilesResponse {
+    /// List of files for this mod
+    pub files: Vec<ModFile>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

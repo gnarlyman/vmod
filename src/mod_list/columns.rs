@@ -449,8 +449,21 @@ impl ModListView {
                     .sync_create()
                     .build();
 
+                // Apply initial CSS class based on version_status
+                apply_version_status_css(&label, mod_entry.version_status());
+
+                // Update CSS class when version_status changes
+                let label_clone = label.clone();
+                let handler_id = mod_entry.connect_notify_local(
+                    Some("version-status"),
+                    move |entry, _| {
+                        apply_version_status_css(&label_clone, entry.version_status());
+                    },
+                );
+
                 unsafe {
                     list_item.set_data("version-binding", binding);
+                    list_item.set_data("version-status-handler-id", handler_id);
                     list_item.set_data("is-section-version", false);
                 }
             }
@@ -464,7 +477,20 @@ impl ModListView {
                 if let Some(binding) = list_item.steal_data::<glib::Binding>("version-binding") {
                     binding.unbind();
                 }
-                let _ = list_item.steal_data::<bool>("is-section-version");
+                let is_section = list_item.steal_data::<bool>("is-section-version").unwrap_or(false);
+                if !is_section {
+                    if let Some(mod_entry) = list_item.item().and_downcast::<ModEntry>() {
+                        if let Some(handler_id) = list_item.steal_data::<glib::SignalHandlerId>("version-status-handler-id") {
+                            mod_entry.disconnect(handler_id);
+                        }
+                    }
+                }
+            }
+
+            // Clear version status CSS classes
+            if let Some(label) = list_item.child().and_downcast::<Label>() {
+                label.remove_css_class("version-uptodate");
+                label.remove_css_class("version-outdated");
             }
         });
 
@@ -630,5 +656,20 @@ impl ModListView {
         column.set_resizable(false);
         column.set_fixed_width(35);
         column_view.append_column(&column);
+    }
+}
+
+/// Apply CSS class to label based on version status
+/// 0 = unknown (no class), 1 = up-to-date (green), 2 = outdated (red)
+fn apply_version_status_css(label: &Label, status: u8) {
+    // Remove any existing version status classes
+    label.remove_css_class("version-uptodate");
+    label.remove_css_class("version-outdated");
+
+    // Apply new class based on status
+    match status {
+        1 => label.add_css_class("version-uptodate"),
+        2 => label.add_css_class("version-outdated"),
+        _ => {} // 0 or other = no class
     }
 }

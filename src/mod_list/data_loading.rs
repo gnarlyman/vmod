@@ -65,6 +65,18 @@ impl ModListView {
             }
         }
 
+        // Restore version status from cache
+        {
+            let cache = self.version_cache.borrow();
+            for mod_entry in &mods {
+                let folder_name = mod_entry.name();
+                if let Some(entry) = cache.get(&folder_name) {
+                    mod_entry.set_version_status(entry.status);
+                    mod_entry.set_latest_version_opt(entry.latest_version.clone());
+                }
+            }
+        }
+
         // Sort mods by order before adding to model
         mods.sort_by_key(|m| m.order());
 

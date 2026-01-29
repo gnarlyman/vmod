@@ -3,7 +3,7 @@
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 
-use super::types::{ApiError, DownloadLink, RateLimitInfo, UserInfo};
+use super::types::{ApiError, DownloadLink, ModFilesResponse, ModInfo, RateLimitInfo, UserInfo};
 
 const API_BASE_URL: &str = "https://api.nexusmods.com";
 const APP_NAME: &str = "vmod";
@@ -169,6 +169,78 @@ impl NexusClient {
                 Err(NexusApiError::Api(error))
             }
             404 => Err(NexusApiError::NotFound(format!("file {} for mod {} in game {}", file_id, mod_id, game))),
+            429 => Err(NexusApiError::RateLimited(rate_limit)),
+            _ => {
+                let error: ApiError = response.json()
+                    .unwrap_or(ApiError { message: "Unknown error".to_string() });
+                Err(NexusApiError::Api(error))
+            }
+        }
+    }
+
+    /// Get mod information from Nexus
+    pub fn get_mod_info(&self, mod_id: u64) -> Result<ApiResponse<ModInfo>, NexusApiError> {
+        self.get_mod_info_for_game(&self.game_domain, mod_id)
+    }
+
+    /// Get mod information for a specific game
+    pub fn get_mod_info_for_game(&self, game: &str, mod_id: u64) -> Result<ApiResponse<ModInfo>, NexusApiError> {
+        let url = format!("{}/v1/games/{}/mods/{}.json", API_BASE_URL, game, mod_id);
+
+        log::debug!("Fetching mod info: {}", url);
+
+        let response = self.client
+            .get(&url)
+            .header("apikey", &self.api_key)
+            .send()?;
+
+        let rate_limit = RateLimitInfo::from_headers(response.headers());
+
+        match response.status().as_u16() {
+            200 => {
+                let info: ModInfo = response.json()
+                    .map_err(|e| NexusApiError::Parse(e.to_string()))?;
+                log::debug!("Got mod info: {} (v{})", info.name, info.version);
+                Ok(ApiResponse { data: info })
+            }
+            401 => Err(NexusApiError::Unauthorized),
+            404 => Err(NexusApiError::NotFound(format!("mod {} in game {}", mod_id, game))),
+            429 => Err(NexusApiError::RateLimited(rate_limit)),
+            _ => {
+                let error: ApiError = response.json()
+                    .unwrap_or(ApiError { message: "Unknown error".to_string() });
+                Err(NexusApiError::Api(error))
+            }
+        }
+    }
+
+    /// Get all files for a mod from Nexus
+    pub fn get_mod_files(&self, mod_id: u64) -> Result<ApiResponse<ModFilesResponse>, NexusApiError> {
+        self.get_mod_files_for_game(&self.game_domain, mod_id)
+    }
+
+    /// Get all files for a mod in a specific game
+    pub fn get_mod_files_for_game(&self, game: &str, mod_id: u64) -> Result<ApiResponse<ModFilesResponse>, NexusApiError> {
+        let url = format!("{}/v1/games/{}/mods/{}/files.json", API_BASE_URL, game, mod_id);
+
+        log::debug!("Fetching mod files: {}", url);
+
+        let response = self.client
+            .get(&url)
+            .header("apikey", &self.api_key)
+            .send()?;
+
+        let rate_limit = RateLimitInfo::from_headers(response.headers());
+
+        match response.status().as_u16() {
+            200 => {
+                let files_response: ModFilesResponse = response.json()
+                    .map_err(|e| NexusApiError::Parse(e.to_string()))?;
+                log::debug!("Got {} files for mod {}", files_response.files.len(), mod_id);
+                Ok(ApiResponse { data: files_response })
+            }
+            401 => Err(NexusApiError::Unauthorized),
+            404 => Err(NexusApiError::NotFound(format!("files for mod {} in game {}", mod_id, game))),
             429 => Err(NexusApiError::RateLimited(rate_limit)),
             _ => {
                 let error: ApiError = response.json()

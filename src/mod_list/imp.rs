@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use crate::mod_entry::{DfmodCacheKey, ModConflictSummary, SectionsConfig, VirtualFileSystem};
+use crate::mod_entry::{DfmodCacheKey, ModConflictSummary, SectionsConfig, VersionCache, VirtualFileSystem};
 use crate::mods_json_view::ModsJsonView;
 use crate::conflict_panel::ConflictPanel;
 
@@ -50,6 +50,10 @@ pub struct ModListView {
     // Downloads panel state
     pub downloads_model: RefCell<Option<gio::ListStore>>,
     pub bottom_paned: RefCell<Option<Paned>>,
+    // Version checking state
+    pub version_cache: Rc<RefCell<VersionCache>>,
+    pub is_version_checking: Rc<RefCell<bool>>,
+    pub check_updates_button: RefCell<Option<Button>>,
 }
 
 impl Default for ModListView {
@@ -82,6 +86,9 @@ impl Default for ModListView {
             game_mods_folder: RefCell::new(None),
             downloads_model: RefCell::new(None),
             bottom_paned: RefCell::new(None),
+            version_cache: Rc::new(RefCell::new(VersionCache::load())),
+            is_version_checking: Rc::new(RefCell::new(false)),
+            check_updates_button: RefCell::new(None),
         }
     }
 }

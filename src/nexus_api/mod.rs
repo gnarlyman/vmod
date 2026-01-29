@@ -15,4 +15,4 @@ pub mod download;
 pub use client::NexusClient;
 pub use config::{downloads_dir, NexusConfig};
 pub use download::{check_existing_file, delete_existing_file, DownloadManager, DownloadMetadata, DownloadProgress, DownloadState};
-pub use types::DownloadLink;
+pub use types::{DownloadLink, ModFile};

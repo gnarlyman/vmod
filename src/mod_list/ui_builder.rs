@@ -14,7 +14,7 @@ use std::rc::Rc;
 use crate::conflict_panel::{ConflictPanel, DownloadItem};
 use crate::mod_entry::{ModEntry, SectionHeader};
 use crate::mods_json_view::ModsJsonView;
-use crate::nexus_api::{downloads_dir, DownloadMetadata};
+use crate::nexus_api::{downloads_dir, DownloadMetadata, NexusConfig};
 use super::imp::ModListView;
 use super::model_utils::find_item_position_in_model;
 
@@ -70,6 +70,14 @@ impl ModListView {
         refresh_button.set_tooltip_text(Some("Rescan mod folders and detect conflicts"));
         self.refresh_button.replace(Some(refresh_button.clone()));
         filter_row.append(&refresh_button);
+
+        // Check Updates button (only visible if API key is configured)
+        let check_updates_button = Button::with_label("Check Updates");
+        check_updates_button.set_tooltip_text(Some("Check Nexus Mods for version updates"));
+        let nexus_config = NexusConfig::load();
+        check_updates_button.set_visible(nexus_config.has_api_key());
+        self.check_updates_button.replace(Some(check_updates_button.clone()));
+        filter_row.append(&check_updates_button);
 
         left_box.append(&filter_row);
 
@@ -428,6 +436,32 @@ impl ModListView {
         let obj_for_refresh = obj.clone();
         refresh_button.connect_clicked(move |_| {
             obj_for_refresh.imp().reload();
+        });
+
+        // Connect check updates button
+        let model_for_updates = self.model.clone();
+        let is_checking_clone = self.is_version_checking.clone();
+        let version_cache_clone = self.version_cache.clone();
+        let progress_box_for_updates = progress_box.clone();
+        let progress_bar_for_updates = progress_bar.clone();
+        let progress_label_for_updates = progress_label.clone();
+        let check_updates_button_clone = check_updates_button.clone();
+        check_updates_button.connect_clicked(move |_| {
+            let nexus_config = NexusConfig::load();
+            if let Some(api_key) = nexus_config.api_key {
+                Self::start_version_check(
+                    &model_for_updates,
+                    &is_checking_clone,
+                    &version_cache_clone,
+                    &progress_box_for_updates,
+                    &progress_bar_for_updates,
+                    &progress_label_for_updates,
+                    &check_updates_button_clone,
+                    api_key,
+                    nexus_config.game_domain,
+                    false, // don't force recheck
+                );
+            }
         });
 
         paned.set_start_child(Some(&left_box));

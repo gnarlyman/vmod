@@ -8,6 +8,7 @@ mod conflict_scan;
 mod backup_ui;
 mod columns;
 mod ui_builder;
+mod version_check;
 
 use gtk4::subclass::prelude::*;
 use gtk4::{gio, glib, Box};

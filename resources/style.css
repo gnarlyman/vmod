@@ -19,3 +19,13 @@ row.highlighted {
     color: #F44336;
     font-weight: bold;
 }
+
+/* Version status for Nexus Mods update checking */
+.version-uptodate {
+    color: #4CAF50;
+}
+
+.version-outdated {
+    color: #F44336;
+    font-weight: bold;
+}
