@@ -10,7 +10,7 @@ pub mod section;
 pub mod list_row;
 pub mod sorting_rules;
 pub mod backup;
-pub mod version_cache;
+pub mod mod_metadata;
 
 pub use mod_data::{ModEntry, ModList};
 pub use mod_state::ModState;
@@ -25,4 +25,4 @@ pub use conflict_detector::{ModConflictSummary, detect_all_conflicts, get_childr
 pub use section::{SectionHeader, SectionsConfig};
 pub use sorting_rules::{normalize_name, SortingRules};
 pub use backup::BackupManager;
-pub use version_cache::VersionCache;
+pub use mod_metadata::{ModMetadata, load_metadata, save_metadata};

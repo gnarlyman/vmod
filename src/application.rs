@@ -1,4 +1,5 @@
 use gtk4::prelude::*;
+use gtk4::subclass::prelude::*;
 use gtk4::{gio, glib, Application, ProgressBar, Label, Window};
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -128,7 +129,20 @@ impl VmodApplication {
             })
             .build();
 
-        self.app.add_action_entries([quit, preferences, open_profile_folder, open_game_folder, open_unity_config_folder]);
+        let fetch_metadata = gio::ActionEntry::builder("fetch_metadata")
+            .activate(move |app: &Application, _, _| {
+                if let Some(window) = app.active_window() {
+                    if let Some(vmod_window) = window.downcast_ref::<VmodWindow>() {
+                        let mod_list_ref = vmod_window.imp().mod_list_view.borrow();
+                        if let Some(mod_list_view) = mod_list_ref.as_ref() {
+                            mod_list_view.fetch_metadata();
+                        }
+                    }
+                }
+            })
+            .build();
+
+        self.app.add_action_entries([quit, preferences, open_profile_folder, open_game_folder, open_unity_config_folder, fetch_metadata]);
 
         // Set up keyboard accelerators
         self.app.set_accels_for_action("app.quit", &["<Ctrl>Q"]);
@@ -255,11 +269,11 @@ impl VmodApplication {
         let api_key_clone = api_key.clone();
         let key_clone = key.clone();
 
-        // Result state
-        let fetch_result: Arc<Mutex<Option<Result<Vec<DownloadLink>, String>>>> = Arc::new(Mutex::new(None));
+        // Result state: (download_links, optional_mod_name, optional_mod_version)
+        let fetch_result: Arc<Mutex<Option<Result<(Vec<DownloadLink>, Option<String>, Option<String>), String>>>> = Arc::new(Mutex::new(None));
         let fetch_result_thread = fetch_result.clone();
 
-        // Spawn thread to fetch links
+        // Spawn thread to fetch links and mod info
         std::thread::spawn(move || {
             let client = match NexusClient::new(api_key_clone, game) {
                 Ok(c) => c,
@@ -270,14 +284,27 @@ impl VmodApplication {
             };
 
             log::info!("Fetching download link for mod {} file {}", mod_id, file_id);
-            match client.get_download_link(mod_id, file_id, &key_clone, expires) {
-                Ok(response) => {
-                    *fetch_result_thread.lock().unwrap() = Some(Ok(response.data));
-                }
+            let links = match client.get_download_link(mod_id, file_id, &key_clone, expires) {
+                Ok(response) => response.data,
                 Err(e) => {
                     *fetch_result_thread.lock().unwrap() = Some(Err(format!("Failed to get download link: {}", e)));
+                    return;
                 }
-            }
+            };
+
+            // Best-effort: also fetch mod info for metadata enrichment
+            let (mod_name, mod_version) = match client.get_mod_info(mod_id) {
+                Ok(response) => {
+                    log::info!("Got mod info: {} v{}", response.data.name, response.data.version);
+                    (Some(response.data.name), Some(response.data.version))
+                }
+                Err(e) => {
+                    log::warn!("Failed to get mod info for {}: {} (download will continue)", mod_id, e);
+                    (None, None)
+                }
+            };
+
+            *fetch_result_thread.lock().unwrap() = Some(Ok((links, mod_name, mod_version)));
         });
 
         // Poll for result - wrap nxm in Option for single consumption
@@ -290,7 +317,7 @@ impl VmodApplication {
             if let Some(result) = fetch_result.lock().unwrap().take() {
                 status_dialog_clone.close();
                 match result {
-                    Ok(links) if !links.is_empty() => {
+                    Ok((links, mod_name, mod_version)) if !links.is_empty() => {
                         let nxm = nxm_opt.borrow_mut().take().unwrap();
                         let api_key = api_key_opt.borrow_mut().take().unwrap();
                         let key = key_opt.borrow_mut().take().unwrap();
@@ -304,10 +331,10 @@ impl VmodApplication {
                         // Check if file already exists
                         if let Some(existing_size) = check_existing_file(&file_name) {
                             log::info!("File {} already exists ({} bytes), prompting user", file_name, existing_size);
-                            Self::show_file_exists_dialog(&window_clone, nxm, api_key, key, expires, file_name, existing_size, links);
+                            Self::show_file_exists_dialog(&window_clone, nxm, api_key, key, expires, file_name, existing_size, links, mod_name, mod_version);
                         } else {
                             // Proceed with download
-                            Self::start_download(&window_clone, nxm, api_key, file_name, links);
+                            Self::start_download(&window_clone, nxm, api_key, file_name, links, mod_name, mod_version);
                         }
                     }
                     Ok(_) => {
@@ -335,6 +362,8 @@ impl VmodApplication {
         file_name: String,
         existing_size: u64,
         links: Vec<DownloadLink>,
+        mod_name: Option<String>,
+        mod_version: Option<String>,
     ) {
         let size_str = if existing_size < 1024 * 1024 {
             format!("{:.1} KB", existing_size as f64 / 1024.0)
@@ -369,7 +398,7 @@ impl VmodApplication {
                         log::error!("Failed to delete existing file: {}", e);
                         return;
                     }
-                    Self::start_download(&window_clone, nxm, api_key, file_name, links);
+                    Self::start_download(&window_clone, nxm, api_key, file_name, links, mod_name, mod_version);
                 }
                 _ => {
                     // Dialog was dismissed
@@ -386,6 +415,8 @@ impl VmodApplication {
         _api_key: String,
         file_name: String,
         links: Vec<DownloadLink>,
+        mod_name: Option<String>,
+        mod_version: Option<String>,
     ) {
         // Create progress dialog
         let dialog = gtk4::Window::builder()
@@ -439,6 +470,8 @@ impl VmodApplication {
         let mod_id = nxm.mod_id;
         let file_id = nxm.file_id;
         let file_name_thread = file_name.clone();
+        let mod_name_thread = mod_name;
+        let mod_version_thread = mod_version;
 
         // Shared state for progress updates
         let progress_state: Arc<Mutex<Option<DownloadProgress>>> = Arc::new(Mutex::new(None));
@@ -487,14 +520,14 @@ impl VmodApplication {
                 }
             });
 
-            // Create metadata
+            // Create metadata (enriched with mod info from API if available)
             let metadata = DownloadMetadata {
                 file_name: file_name_thread.clone(),
                 mod_id,
                 file_id,
                 game: game.clone(),
-                mod_name: None,
-                version: None,
+                mod_name: mod_name_thread,
+                version: mod_version_thread,
                 source_url: links[0].uri.clone(),
                 size: 0,
                 downloaded_at: chrono::Utc::now().timestamp(),

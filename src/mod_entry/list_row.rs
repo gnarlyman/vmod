@@ -68,7 +68,7 @@ impl ListRow {
     pub fn from_mod(mod_entry: &ModEntry) -> Self {
         let obj: Self = Object::builder()
             .property("is-section", false)
-            .property("display-name", mod_entry.name())
+            .property("display-name", mod_entry.display_name())
             .property("order", mod_entry.order())
             .property("expanded", true)
             .property("enabled", mod_entry.enabled())
@@ -82,7 +82,7 @@ impl ListRow {
         obj.imp().mod_entry.replace(Some(mod_entry.clone()));
 
         // Bind properties bidirectionally for live updates
-        mod_entry.bind_property("name", &obj, "display-name")
+        mod_entry.bind_property("display-name", &obj, "display-name")
             .bidirectional()
             .sync_create()
             .build();

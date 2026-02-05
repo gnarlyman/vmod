@@ -8,7 +8,7 @@ mod conflict_scan;
 mod backup_ui;
 mod columns;
 mod ui_builder;
-mod version_check;
+mod metadata_fetch;
 
 use gtk4::subclass::prelude::*;
 use gtk4::{gio, glib, Box};
@@ -54,6 +54,35 @@ impl ModListView {
     /// Reload mods using stored paths (used after backup restore)
     pub fn reload(&self) {
         self.imp().reload();
+    }
+
+    /// Trigger batch metadata fetch and version check from Nexus Mods API
+    pub fn fetch_metadata(&self) {
+        let imp = self.imp();
+        let nexus_config = crate::nexus_api::NexusConfig::load();
+        if let Some(api_key) = nexus_config.api_key {
+            // Reuse the existing progress UI widgets
+            if let (Some(progress_box), Some(progress_bar), Some(progress_label)) = (
+                imp.progress_box.borrow().as_ref().cloned(),
+                imp.progress_bar.borrow().as_ref().cloned(),
+                imp.progress_label.borrow().as_ref().cloned(),
+            ) {
+                // Create a dummy button since this is triggered from the menu
+                let button = gtk4::Button::new();
+                imp::ModListView::start_metadata_fetch(
+                    &imp.model,
+                    &imp.is_metadata_fetching,
+                    &progress_box,
+                    &progress_bar,
+                    &progress_label,
+                    &button,
+                    api_key,
+                    nexus_config.game_domain,
+                );
+            }
+        } else {
+            log::warn!("No Nexus API key configured, cannot fetch metadata");
+        }
     }
 }
 

@@ -12,9 +12,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::conflict_panel::{ConflictPanel, DownloadItem};
-use crate::mod_entry::{ModEntry, SectionHeader};
+use crate::mod_entry::{ModEntry, ModMetadata, SectionHeader, save_metadata};
 use crate::mods_json_view::ModsJsonView;
-use crate::nexus_api::{downloads_dir, DownloadMetadata, NexusConfig};
+use crate::nexus_api::{downloads_dir, DownloadMetadata};
 use super::imp::ModListView;
 use super::model_utils::find_item_position_in_model;
 
@@ -71,14 +71,6 @@ impl ModListView {
         self.refresh_button.replace(Some(refresh_button.clone()));
         filter_row.append(&refresh_button);
 
-        // Check Updates button (only visible if API key is configured)
-        let check_updates_button = Button::with_label("Check Updates");
-        check_updates_button.set_tooltip_text(Some("Check Nexus Mods for version updates"));
-        let nexus_config = NexusConfig::load();
-        check_updates_button.set_visible(nexus_config.has_api_key());
-        self.check_updates_button.replace(Some(check_updates_button.clone()));
-        filter_row.append(&check_updates_button);
-
         left_box.append(&filter_row);
 
         // Create the ListStore to hold ModEntry and SectionHeader objects
@@ -113,7 +105,9 @@ impl ModListView {
                 if search.is_empty() {
                     return true;
                 }
-                return mod_entry.name().to_lowercase().contains(&search.to_lowercase());
+                let search_lower = search.to_lowercase();
+                return mod_entry.name().to_lowercase().contains(&search_lower)
+                    || mod_entry.display_name().to_lowercase().contains(&search_lower);
             }
 
             true
@@ -436,32 +430,6 @@ impl ModListView {
         let obj_for_refresh = obj.clone();
         refresh_button.connect_clicked(move |_| {
             obj_for_refresh.imp().reload();
-        });
-
-        // Connect check updates button
-        let model_for_updates = self.model.clone();
-        let is_checking_clone = self.is_version_checking.clone();
-        let version_cache_clone = self.version_cache.clone();
-        let progress_box_for_updates = progress_box.clone();
-        let progress_bar_for_updates = progress_bar.clone();
-        let progress_label_for_updates = progress_label.clone();
-        let check_updates_button_clone = check_updates_button.clone();
-        check_updates_button.connect_clicked(move |_| {
-            let nexus_config = NexusConfig::load();
-            if let Some(api_key) = nexus_config.api_key {
-                Self::start_version_check(
-                    &model_for_updates,
-                    &is_checking_clone,
-                    &version_cache_clone,
-                    &progress_box_for_updates,
-                    &progress_bar_for_updates,
-                    &progress_label_for_updates,
-                    &check_updates_button_clone,
-                    api_key,
-                    nexus_config.game_domain,
-                    false, // don't force recheck
-                );
-            }
         });
 
         paned.set_start_child(Some(&left_box));
@@ -806,8 +774,37 @@ impl ModListView {
         match extract_mod_archive(&item.path(), &dest_folder) {
             Ok(()) => {
                 log::info!("Successfully installed mod to: {:?}", dest_folder);
-                // Note: The mod list will need to be refreshed by the parent window
-                // We could emit a signal here for that purpose
+
+                // Create vmod_meta.json if we have mod info from the download
+                let mod_name = item.mod_name();
+                let mod_id = item.mod_id();
+                if !mod_name.is_empty() && mod_id > 0 {
+                    let metadata = ModMetadata {
+                        mod_name,
+                        nexus_id: mod_id.to_string(),
+                        version: {
+                            let v = item.version();
+                            if v.is_empty() { None } else { Some(v) }
+                        },
+                        file_id: {
+                            let fid = item.file_id();
+                            if fid > 0 { Some(fid) } else { None }
+                        },
+                        game_domain: {
+                            let g = item.game();
+                            if g.is_empty() { None } else { Some(g) }
+                        },
+                        fetched_at: Some(chrono::Utc::now().timestamp()),
+                        version_status: 0,
+                        latest_version: None,
+                        version_checked_at: None,
+                    };
+                    if let Err(e) = save_metadata(&dest_folder, &metadata) {
+                        log::warn!("Failed to save mod metadata: {}", e);
+                    } else {
+                        log::info!("Saved vmod_meta.json for '{}'", metadata.mod_name);
+                    }
+                }
             }
             Err(e) => {
                 log::error!("Failed to extract mod archive: {}", e);

@@ -274,6 +274,13 @@ impl ModListView {
                     .sync_create()
                     .build();
 
+                // Show display name in tooltip when it differs from folder name
+                let folder_name = mod_entry.name();
+                let display = mod_entry.display_name();
+                if folder_name != display {
+                    label.set_tooltip_text(Some(&display));
+                }
+
                 container.append(&label);
 
                 // Create right-click gesture for context menu

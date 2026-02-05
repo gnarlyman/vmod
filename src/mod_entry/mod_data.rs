@@ -5,6 +5,8 @@ use gtk4::subclass::prelude::*;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
+use super::mod_metadata::load_metadata;
+
 /// Parse Nexus Mods metadata from folder name
 /// Format: <name>-<nexus_id>-<version_with_dashes>-<timestamp>
 /// Or: <name>-<version_with_dots>-<nexus_id>-<version_with_dashes>-<timestamp>
@@ -70,6 +72,8 @@ mod imp {
         #[property(get, set)]
         pub name: RefCell<String>,
         #[property(get, set)]
+        pub display_name: RefCell<String>,
+        #[property(get, set)]
         pub version: RefCell<String>,
         #[property(get, set)]
         pub enabled: Cell<bool>,
@@ -107,21 +111,43 @@ glib::wrapper! {
 impl ModEntry {
     pub fn new(name: String, path: PathBuf, order: u32) -> Self {
         // Parse Nexus metadata from folder name
-        let (version, nexus_id) = parse_nexus_metadata(&name);
+        let (parsed_version, parsed_nexus_id) = parse_nexus_metadata(&name);
 
-        // Use parsed version or default to "1.0"
-        let version = version.unwrap_or_else(|| "1.0".to_string());
+        // Try to load persistent metadata from vmod_meta.json
+        let metadata = load_metadata(&path);
+
+        // Prefer metadata values over folder-name-parsed values
+        let display_name = metadata.as_ref()
+            .map(|m| m.mod_name.clone())
+            .unwrap_or_else(|| name.clone());
+
+        let version = metadata.as_ref()
+            .and_then(|m| m.version.clone())
+            .or(parsed_version)
+            .unwrap_or_else(|| "1.0".to_string());
+
+        let nexus_id = metadata.as_ref()
+            .map(|m| Some(m.nexus_id.clone()))
+            .unwrap_or(parsed_nexus_id);
+
+        let version_status = metadata.as_ref().map(|m| m.version_status).unwrap_or(0);
+        let latest_version = metadata.as_ref().and_then(|m| m.latest_version.clone());
 
         let obj: Self = Object::builder()
             .property("name", &name)
+            .property("display-name", &display_name)
             .property("version", &version)
             .property("enabled", false)
             .property("order", order)
             .property("nexus-id", &nexus_id)
             .property("conflict-count", 0u32)
+            .property("version-status", version_status)
             .build();
 
         obj.imp().path.replace(path);
+        if latest_version.is_some() {
+            obj.set_latest_version_opt(latest_version);
+        }
         obj
     }
 

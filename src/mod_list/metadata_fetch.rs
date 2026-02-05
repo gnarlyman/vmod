@@ -1,13 +1,18 @@
-//! Async version checking functionality for Nexus Mods updates.
+//! Batch metadata and version checking from Nexus Mods API.
+//!
+//! Fetches mod names, metadata, and version status for all mods
+//! that have a nexus_id. Skips mods that already have up-to-date
+//! metadata unless a force refresh is requested.
 
 use gtk4::prelude::*;
-use gtk4::{glib, Box, Button, Label, ProgressBar};
+use gtk4::{gio, glib, Box, Button, Label, ProgressBar};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use crate::mod_entry::{ModEntry, VersionCache};
+use crate::mod_entry::{ModEntry, ModMetadata, load_metadata, save_metadata};
 use crate::nexus_api::{ModFile, NexusClient};
 use super::imp::ModListView;
 
@@ -17,49 +22,52 @@ pub const VERSION_UPTODATE: u8 = 1;
 pub const VERSION_OUTDATED: u8 = 2;
 
 /// Progress state shared between background thread and main thread
-pub struct VersionCheckState {
+pub struct MetadataFetchState {
     pub current: usize,
     pub total: usize,
     pub current_mod: String,
     pub completed: bool,
-    /// Results: (folder_name, status, latest_version, nexus_id)
-    pub results: Vec<(String, u8, Option<String>, Option<String>)>,
+    /// Results: (folder_name, mod_path, mod_name, version_status, latest_version)
+    pub results: Vec<(String, PathBuf, String, u8, Option<String>)>,
 }
 
 impl ModListView {
-    /// Start async version checking on a background thread
-    pub fn start_version_check(
+    /// Start async metadata fetch and version check on a background thread.
+    ///
+    /// Processes all mods with a nexus_id:
+    /// - Mods without `vmod_meta.json`: creates metadata from API
+    /// - All mods: checks version status against Nexus files
+    pub fn start_metadata_fetch(
         model: &RefCell<Option<gio::ListStore>>,
-        is_checking: &Rc<RefCell<bool>>,
-        version_cache: &Rc<RefCell<VersionCache>>,
+        is_fetching: &Rc<RefCell<bool>>,
         progress_box: &Box,
         progress_bar: &ProgressBar,
         progress_label: &Label,
-        check_button: &Button,
+        fetch_button: &Button,
         api_key: String,
         game_domain: String,
-        force_recheck: bool,
     ) {
-        // Check if already checking
-        if *is_checking.borrow() {
+        // Check if already fetching
+        if *is_fetching.borrow() {
             return;
         }
-        *is_checking.borrow_mut() = true;
+        *is_fetching.borrow_mut() = true;
 
-        // Collect mods with nexus_id that need checking
-        let mut mods_to_check: Vec<(String, String, String)> = Vec::new(); // (folder_name, version, nexus_id)
-        let cache = version_cache.borrow();
+        // Collect mods with nexus_id that need fetching:
+        // - no vmod_meta.json yet, OR
+        // - version_status is still unknown (never checked)
+        let mut mods_to_fetch: Vec<(String, PathBuf, String, String)> = Vec::new(); // (folder_name, path, version, nexus_id)
 
         if let Some(model_store) = model.borrow().as_ref() {
             for i in 0..model_store.n_items() {
                 if let Some(item) = model_store.item(i) {
                     if let Ok(entry) = item.downcast::<ModEntry>() {
                         if let Some(nexus_id) = entry.nexus_id() {
-                            let folder_name = entry.name();
-                            // Check if needs checking (not in cache or force recheck)
-                            if force_recheck || cache.needs_check(&folder_name) {
-                                mods_to_check.push((
-                                    folder_name,
+                            let needs_fetch = entry.version_status() == VERSION_UNKNOWN;
+                            if needs_fetch {
+                                mods_to_fetch.push((
+                                    entry.name(),
+                                    entry.path(),
                                     entry.version(),
                                     nexus_id,
                                 ));
@@ -69,34 +77,33 @@ impl ModListView {
                 }
             }
         }
-        drop(cache);
 
-        if mods_to_check.is_empty() {
-            log::info!("No mods need version checking");
-            *is_checking.borrow_mut() = false;
+        if mods_to_fetch.is_empty() {
+            log::info!("All mods already up to date");
+            *is_fetching.borrow_mut() = false;
             return;
         }
 
         // Group mods by nexus_id to minimize API calls
-        let mut mods_by_id: HashMap<String, Vec<(String, String)>> = HashMap::new();
-        for (folder_name, version, nexus_id) in mods_to_check {
+        let mut mods_by_id: HashMap<String, Vec<(String, PathBuf, String)>> = HashMap::new();
+        for (folder_name, path, version, nexus_id) in mods_to_fetch {
             mods_by_id
                 .entry(nexus_id)
                 .or_default()
-                .push((folder_name, version));
+                .push((folder_name, path, version));
         }
 
         let total_unique = mods_by_id.len();
-        log::info!("Starting version check for {} unique Nexus mods", total_unique);
+        log::info!("Starting metadata fetch for {} unique Nexus mods", total_unique);
 
-        // Show progress UI and disable button during check
+        // Show progress UI and disable button during fetch
         progress_box.set_visible(true);
-        check_button.set_sensitive(false);
+        fetch_button.set_sensitive(false);
         progress_bar.set_fraction(0.0);
-        progress_label.set_text("Checking versions...");
+        progress_label.set_text("Fetching mod info...");
 
         // Shared state for progress
-        let progress_state = Arc::new(Mutex::new(VersionCheckState {
+        let progress_state = Arc::new(Mutex::new(MetadataFetchState {
             current: 0,
             total: total_unique,
             current_mod: String::new(),
@@ -105,11 +112,12 @@ impl ModListView {
         }));
 
         let progress_state_thread = progress_state.clone();
+        let game_domain_thread = game_domain.clone();
 
         // Spawn background thread for API calls
         std::thread::spawn(move || {
             // Create API client
-            let client = match NexusClient::new(api_key, game_domain) {
+            let client = match NexusClient::new(api_key, game_domain_thread.clone()) {
                 Ok(c) => c,
                 Err(e) => {
                     log::error!("Failed to create Nexus client: {}", e);
@@ -135,25 +143,16 @@ impl ModListView {
                     Ok(id) => id,
                     Err(_) => {
                         log::warn!("Invalid nexus_id: {}", nexus_id);
-                        // Mark all folders as unknown
-                        let mut state = progress_state_thread.lock().unwrap();
-                        for (folder_name, _) in folders {
-                            state.results.push((folder_name, VERSION_UNKNOWN, None, Some(nexus_id.clone())));
-                        }
                         continue;
                     }
                 };
 
                 // Fetch mod info from API
-                let mod_version = match client.get_mod_info(mod_id) {
-                    Ok(response) => Some(response.data.version),
-                    Err(e) => {
-                        log::warn!("Failed to get mod info for {}: {}", nexus_id, e);
-                        None
-                    }
-                };
+                let mod_info = client.get_mod_info(mod_id).ok().map(|r| r.data);
+                let mod_version = mod_info.as_ref().map(|i| i.version.clone());
+                let mod_name = mod_info.as_ref().map(|i| i.name.clone());
 
-                // Fetch mod files from API
+                // Fetch mod files from API for version checking
                 let files = match client.get_mod_files(mod_id) {
                     Ok(response) => response.data.files,
                     Err(e) => {
@@ -162,18 +161,50 @@ impl ModListView {
                     }
                 };
 
-                // Find latest version among MAIN files (or all files if no MAIN)
                 let latest_version = find_latest_version(&files, &mod_version);
 
-                // Check each folder against available versions
-                for (folder_name, local_version) in folders {
-                    let status = check_version_status(&local_version, &mod_version, &files);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                // Process each folder sharing this nexus_id
+                for (folder_name, path, local_version) in &folders {
+                    let status = check_version_status(local_version, &mod_version, &files);
+
+                    // Load existing metadata or create new
+                    let mut metadata = load_metadata(path).unwrap_or_else(|| ModMetadata {
+                        mod_name: mod_name.clone().unwrap_or_else(|| folder_name.clone()),
+                        nexus_id: nexus_id.clone(),
+                        version: Some(local_version.clone()),
+                        file_id: None,
+                        game_domain: Some(game_domain_thread.clone()),
+                        fetched_at: Some(chrono::Utc::now().timestamp()),
+                        version_status: 0,
+                        latest_version: None,
+                        version_checked_at: None,
+                    });
+
+                    // Update all fields from API
+                    if let Some(ref name) = mod_name {
+                        metadata.mod_name = name.clone();
+                    }
+                    metadata.version_status = status;
+                    metadata.latest_version = latest_version.clone();
+                    metadata.version_checked_at = Some(now);
+                    metadata.fetched_at = Some(chrono::Utc::now().timestamp());
+
+                    if let Err(e) = save_metadata(path, &metadata) {
+                        log::warn!("Failed to save metadata for {}: {}", folder_name, e);
+                    }
+
                     let mut state = progress_state_thread.lock().unwrap();
                     state.results.push((
-                        folder_name,
+                        folder_name.clone(),
+                        path.clone(),
+                        metadata.mod_name.clone(),
                         status,
                         latest_version.clone(),
-                        Some(nexus_id.clone()),
                     ));
                 }
 
@@ -184,40 +215,29 @@ impl ModListView {
             // Mark as completed
             let mut state = progress_state_thread.lock().unwrap();
             state.completed = true;
-            log::info!("Version check completed with {} results", state.results.len());
+            log::info!("Metadata fetch completed with {} results", state.results.len());
         });
 
         // Poll progress from main thread
-        let is_checking_clone = is_checking.clone();
-        let version_cache_clone = version_cache.clone();
+        let is_fetching_clone = is_fetching.clone();
         let model_clone = model.borrow().clone();
         let progress_box_clone = progress_box.clone();
         let progress_bar_clone = progress_bar.clone();
         let progress_label_clone = progress_label.clone();
-        let check_button_clone = check_button.clone();
+        let fetch_button_clone = fetch_button.clone();
 
         glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             let state = progress_state.lock().unwrap();
 
             if state.completed {
-                // Apply results to ModEntry objects and update cache
+                // Apply results to ModEntry objects
                 if let Some(ref model_store) = model_clone {
-                    let mut cache = version_cache_clone.borrow_mut();
-
-                    for (folder_name, status, latest_version, nexus_id) in &state.results {
-                        // Update cache
-                        cache.set(
-                            folder_name.clone(),
-                            *status,
-                            latest_version.clone(),
-                            nexus_id.clone(),
-                        );
-
-                        // Find and update the ModEntry
+                    for (folder_name, _path, mod_name, status, latest_version) in &state.results {
                         for i in 0..model_store.n_items() {
                             if let Some(item) = model_store.item(i) {
                                 if let Ok(entry) = item.downcast::<ModEntry>() {
                                     if entry.name() == *folder_name {
+                                        entry.set_display_name(mod_name.clone());
                                         entry.set_version_status(*status);
                                         entry.set_latest_version_opt(latest_version.clone());
                                         break;
@@ -226,17 +246,12 @@ impl ModListView {
                             }
                         }
                     }
-
-                    // Save cache to disk
-                    if let Err(e) = cache.save() {
-                        log::error!("Failed to save version cache: {}", e);
-                    }
                 }
 
                 // Hide progress UI and re-enable button
                 progress_box_clone.set_visible(false);
-                check_button_clone.set_sensitive(true);
-                *is_checking_clone.borrow_mut() = false;
+                fetch_button_clone.set_sensitive(true);
+                *is_fetching_clone.borrow_mut() = false;
 
                 return glib::ControlFlow::Break;
             }
@@ -312,18 +327,17 @@ fn check_version_status(
     headline_version: &Option<String>,
     files: &[ModFile],
 ) -> u8 {
-    // Find the latest version (newest MAIN file, or headline)
     let latest = find_latest_version(files, headline_version);
 
     match latest {
         Some(ref latest_ver) => {
             if versions_match(local_version, latest_ver) {
-                VERSION_UPTODATE  // Green: matches latest
+                VERSION_UPTODATE
             } else {
-                VERSION_OUTDATED  // Red: doesn't match latest
+                VERSION_OUTDATED
             }
         }
-        None => VERSION_UNKNOWN,  // No version info available
+        None => VERSION_UNKNOWN,
     }
 }
 
