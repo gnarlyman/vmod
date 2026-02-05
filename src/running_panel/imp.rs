@@ -755,11 +755,14 @@ impl RunningPanel {
         content
     }
 
-    /// Scroll a TextView to the bottom
+    /// Scroll a TextView to the bottom (deferred to next main loop iteration)
     fn scroll_to_bottom(view: &TextView) {
-        let buffer = view.buffer();
-        let end = buffer.end_iter();
-        let mark = buffer.create_mark(None, &end, false);
-        view.scroll_to_mark(&mark, 0.0, false, 0.0, 0.0);
+        let view = view.clone();
+        glib::idle_add_local_once(move || {
+            let buffer = view.buffer();
+            let end = buffer.end_iter();
+            let mark = buffer.create_mark(None, &end, false);
+            view.scroll_to_mark(&mark, 0.0, true, 0.0, 1.0);
+        });
     }
 }
