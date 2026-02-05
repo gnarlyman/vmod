@@ -619,18 +619,23 @@ impl ModListView {
 
         // Poll for result from main thread
         let model_clone = model.borrow().clone();
+        log::debug!("Model clone is_some: {}", model_clone.is_some());
 
         glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             let state = result_state.lock().unwrap();
 
             if state.completed {
+                log::info!("Single version check completed, error: {:?}", state.error);
                 if state.error.is_none() {
                     // Apply result to ModEntry object
                     if let Some(ref model_store) = model_clone {
+                        log::debug!("Searching {} items for folder_name={}", model_store.n_items(), folder_name);
                         for i in 0..model_store.n_items() {
                             if let Some(item) = model_store.item(i) {
                                 if let Ok(entry) = item.downcast::<ModEntry>() {
                                     if entry.name() == folder_name {
+                                        log::info!("Updating ModEntry {} with status={}, latest={:?}",
+                                            folder_name, state.version_status, state.latest_version);
                                         entry.set_version_status(state.version_status);
                                         entry.set_latest_version_opt(state.latest_version.clone());
                                         break;
@@ -638,6 +643,8 @@ impl ModListView {
                                 }
                             }
                         }
+                    } else {
+                        log::warn!("Model clone is None, cannot update UI");
                     }
                 }
                 return glib::ControlFlow::Break;

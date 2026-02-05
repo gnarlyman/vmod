@@ -372,8 +372,10 @@ impl ModListView {
                         let popover_for_version = popover.clone();
 
                         check_version_action.connect_activate(move |_action, _param| {
+                            log::info!("Check Version action triggered for: {}", folder_name_clone);
                             let nexus_config = crate::nexus_api::NexusConfig::load();
                             if let Some(api_key) = nexus_config.api_key {
+                                log::info!("API key found, calling check_single_mod_version");
                                 super::imp::ModListView::check_single_mod_version(
                                     &model_for_version,
                                     folder_name_clone.clone(),
