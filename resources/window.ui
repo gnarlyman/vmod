@@ -27,8 +27,12 @@
     <submenu>
       <attribute name="label" translatable="yes">_Edit</attribute>
       <item>
-        <attribute name="label" translatable="yes">Update from _Nexus</attribute>
+        <attribute name="label" translatable="yes">Update _Meta from Nexus</attribute>
         <attribute name="action">app.fetch_metadata</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Check All _Versions</attribute>
+        <attribute name="action">app.check_versions</attribute>
       </item>
       <item>
         <attribute name="label" translatable="yes">_Preferences</attribute>

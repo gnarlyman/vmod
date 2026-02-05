@@ -293,6 +293,9 @@ impl ModListView {
                 let profile_name_for_menu = profile_name_ref.clone();
                 let profile_path_for_menu = profile_path_ref.clone();
                 let mod_path = mod_entry.path();
+                let mod_folder_name = mod_entry.name();
+                let mod_nexus_id = mod_entry.nexus_id();
+                let mod_version = mod_entry.version();
 
                 gesture.connect_pressed(move |gesture, _n_press, x, y| {
                     // Build menu dynamically from current sections
@@ -310,6 +313,11 @@ impl ModListView {
                     drop(sections);
 
                     menu.append_submenu(Some("Send to Section"), &send_section);
+
+                    // Add "Check Version" if mod has nexus_id
+                    if mod_nexus_id.is_some() {
+                        menu.append(Some("Check Version"), Some("mod.check-version"));
+                    }
 
                     // Create popover menu
                     let popover = PopoverMenu::from_model(Some(&menu));
@@ -352,6 +360,38 @@ impl ModListView {
                     });
 
                     action_group.add_action(&send_action);
+
+                    // Add check-version action if mod has nexus_id
+                    if let Some(ref nexus_id) = mod_nexus_id {
+                        let check_version_action = gio::SimpleAction::new("check-version", None);
+                        let model_for_version = model_for_menu.clone();
+                        let folder_name_clone = mod_folder_name.clone();
+                        let mod_path_for_version = mod_path.clone();
+                        let nexus_id_clone = nexus_id.clone();
+                        let version_clone = mod_version.clone();
+                        let popover_for_version = popover.clone();
+
+                        check_version_action.connect_activate(move |_action, _param| {
+                            let nexus_config = crate::nexus_api::NexusConfig::load();
+                            if let Some(api_key) = nexus_config.api_key {
+                                super::imp::ModListView::check_single_mod_version(
+                                    &model_for_version,
+                                    folder_name_clone.clone(),
+                                    mod_path_for_version.clone(),
+                                    nexus_id_clone.clone(),
+                                    version_clone.clone(),
+                                    api_key,
+                                    nexus_config.game_domain,
+                                );
+                            } else {
+                                log::warn!("No Nexus API key configured");
+                            }
+                            popover_for_version.popdown();
+                        });
+
+                        action_group.add_action(&check_version_action);
+                    }
+
                     popover.insert_action_group("mod", Some(&action_group));
 
                     popover.popup();

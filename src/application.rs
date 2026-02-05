@@ -142,7 +142,20 @@ impl VmodApplication {
             })
             .build();
 
-        self.app.add_action_entries([quit, preferences, open_profile_folder, open_game_folder, open_unity_config_folder, fetch_metadata]);
+        let check_versions = gio::ActionEntry::builder("check_versions")
+            .activate(move |app: &Application, _, _| {
+                if let Some(window) = app.active_window() {
+                    if let Some(vmod_window) = window.downcast_ref::<VmodWindow>() {
+                        let mod_list_ref = vmod_window.imp().mod_list_view.borrow();
+                        if let Some(mod_list_view) = mod_list_ref.as_ref() {
+                            mod_list_view.check_all_versions();
+                        }
+                    }
+                }
+            })
+            .build();
+
+        self.app.add_action_entries([quit, preferences, open_profile_folder, open_game_folder, open_unity_config_folder, fetch_metadata, check_versions]);
 
         // Set up keyboard accelerators
         self.app.set_accels_for_action("app.quit", &["<Ctrl>Q"]);

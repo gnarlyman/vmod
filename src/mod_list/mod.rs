@@ -56,7 +56,7 @@ impl ModListView {
         self.imp().reload();
     }
 
-    /// Trigger batch metadata fetch and version check from Nexus Mods API
+    /// Trigger batch metadata fetch (mod names only) from Nexus Mods API
     pub fn fetch_metadata(&self) {
         let imp = self.imp();
         let nexus_config = crate::nexus_api::NexusConfig::load();
@@ -82,6 +82,56 @@ impl ModListView {
             }
         } else {
             log::warn!("No Nexus API key configured, cannot fetch metadata");
+        }
+    }
+
+    /// Trigger version check for all mods with Nexus ID
+    pub fn check_all_versions(&self) {
+        let imp = self.imp();
+        let nexus_config = crate::nexus_api::NexusConfig::load();
+        if let Some(api_key) = nexus_config.api_key {
+            // Reuse the existing progress UI widgets
+            if let (Some(progress_box), Some(progress_bar), Some(progress_label)) = (
+                imp.progress_box.borrow().as_ref().cloned(),
+                imp.progress_bar.borrow().as_ref().cloned(),
+                imp.progress_label.borrow().as_ref().cloned(),
+            ) {
+                // Create a dummy button since this is triggered from the menu
+                let button = gtk4::Button::new();
+                imp::ModListView::start_version_check(
+                    &imp.model,
+                    &imp.is_metadata_fetching,
+                    &progress_box,
+                    &progress_bar,
+                    &progress_label,
+                    &button,
+                    api_key,
+                    nexus_config.game_domain,
+                );
+            }
+        } else {
+            log::warn!("No Nexus API key configured, cannot check versions");
+        }
+    }
+
+    /// Check version for a single mod
+    pub fn check_single_version(&self, mod_entry: &ModEntry) {
+        let imp = self.imp();
+        let nexus_config = crate::nexus_api::NexusConfig::load();
+        if let Some(api_key) = nexus_config.api_key {
+            if let Some(nexus_id) = mod_entry.nexus_id() {
+                imp::ModListView::check_single_mod_version(
+                    &imp.model,
+                    mod_entry.name(),
+                    mod_entry.path(),
+                    nexus_id,
+                    mod_entry.version(),
+                    api_key,
+                    nexus_config.game_domain,
+                );
+            }
+        } else {
+            log::warn!("No Nexus API key configured, cannot check version");
         }
     }
 }
