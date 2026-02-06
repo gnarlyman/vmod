@@ -134,6 +134,11 @@ impl ModListView {
             log::warn!("No Nexus API key configured, cannot check version");
         }
     }
+
+    /// Refresh the downloads list
+    pub fn refresh_downloads(&self) {
+        imp::ModListView::refresh_downloads_static(&self.imp().downloads_model);
+    }
 }
 
 impl Default for ModListView {

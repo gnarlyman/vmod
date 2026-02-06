@@ -669,7 +669,7 @@ impl ModListView {
     }
 
     /// Scan the downloads directory and populate the downloads list
-    fn refresh_downloads_static(downloads_model: &RefCell<Option<gio::ListStore>>) {
+    pub fn refresh_downloads_static(downloads_model: &RefCell<Option<gio::ListStore>>) {
         if let Some(model) = downloads_model.borrow().as_ref() {
             model.remove_all();
 

@@ -559,6 +559,7 @@ impl VmodApplication {
 
         // Poll progress from main thread
         let dialog_clone = dialog.clone();
+        let window_clone = window.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             // Check for result
             if let Some(result) = download_result.lock().unwrap().take() {
@@ -566,7 +567,13 @@ impl VmodApplication {
                 match result {
                     Ok(path) => {
                         log::info!("Download completed: {:?}", path);
-                        // TODO: Show success notification or prompt to install
+                        // Refresh the Downloads panel to show the new download
+                        if let Some(vmod_window) = window_clone.downcast_ref::<VmodWindow>() {
+                            let mod_list_ref = vmod_window.imp().mod_list_view.borrow();
+                            if let Some(mod_list_view) = mod_list_ref.as_ref() {
+                                mod_list_view.refresh_downloads();
+                            }
+                        }
                     }
                     Err(e) => {
                         log::error!("Download failed: {}", e);
